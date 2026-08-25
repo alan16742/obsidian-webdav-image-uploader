@@ -18,7 +18,7 @@ import {
 	LinkInfo,
 } from "./utils";
 import {
-	DEFAULT_SETTINGS,
+	sanitizeSettings,
 	WebDavImageUploaderSettings,
 	WebDavImageUploaderSettingTab,
 } from "./settings";
@@ -26,6 +26,7 @@ import { BatchDownloader, BatchUploader } from "./batch";
 import { ConfirmModal } from "./modals/confirmModal";
 import { Link, createLink } from "./link";
 import { getRenamePath } from "./modals/renameModal";
+import { findUploadRule, isManagedUrl } from "./uploadRules";
 
 export default class WebDavImageUploaderPlugin extends Plugin {
 	settings: WebDavImageUploaderSettings;
@@ -107,11 +108,7 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 	}
 
 	async loadSettings() {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData(),
-		);
+		this.settings = sanitizeSettings(await this.loadData());
 
 		if (this.client != null) {
 			this.client.initClient();
@@ -119,7 +116,7 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 	}
 
 	async saveSettings() {
-		await this.saveData(this.settings);
+		await this.saveData(sanitizeSettings(this.settings));
 		this.client.initClient();
 	}
 
@@ -149,11 +146,16 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 			fileList = (e as DragEvent).dataTransfer?.files;
 		}
 
-		const files = Array.from(fileList ?? []).filter(
-			(f) => !this.isExcludeFile(f.name),
-		);
-
+		const allFiles = Array.from(fileList ?? []);
+		if (allFiles.length === 0) {
+			return;
+		}
+		const files = allFiles.filter((file) => !this.isExcludeFile(file.name));
+		const skippedFiles = allFiles.filter((file) => this.isExcludeFile(file.name));
 		if (files.length === 0) {
+			new Notice(
+				`Skipped ${allFiles.length === 1 ? `'${allFiles[0].name}'` : `${allFiles.length} files`}: no upload rule matched.`,
+			);
 			return;
 		}
 
@@ -195,6 +197,11 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 
 		for (const msg of errors) {
 			noticeError(`Failed to upload file ${msg}`);
+		}
+		if (skippedFiles.length > 0) {
+			new Notice(
+				`Skipped ${skippedFiles.length} file${skippedFiles.length === 1 ? "" : "s"}: no upload rule matched.`,
+			);
 		}
 	}
 
@@ -441,18 +448,10 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 	}
 
 	isWebdavUrl(url: string) {
-		return (
-			url.startsWith(this.settings.url) ||
-			(this.settings.directLink !== "" &&
-				url.startsWith(this.settings.directLink))
-		);
+		return isManagedUrl(url, this.settings.url, this.settings.uploadRules);
 	}
 
 	isExcludeFile(path: string) {
-		const extension = path.split(".").pop()?.toLowerCase();
-		if (extension == null) {
-			return false;
-		}
-		return !this.settings.includeExtensions.includes(extension);
+		return findUploadRule(this.settings.uploadRules, path) == null;
 	}
 }

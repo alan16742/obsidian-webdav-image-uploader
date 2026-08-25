@@ -1,12 +1,17 @@
 import { TFile } from "obsidian";
 import WebDavImageUploaderPlugin from "../main";
 import {
-	formatPath,
 	getFileByPath,
 	getFormatVariables,
 	isLocalPath,
 	LinkInfo,
 } from "../utils";
+import {
+	buildManagedUrl,
+	findUploadRule,
+	getManagedUrlPrefix,
+	resolveUploadTarget,
+} from "../uploadRules";
 import { Link, LinkData } from "./types";
 
 export class AttachmentLink<T extends LinkData> implements Link<T> {
@@ -39,10 +44,20 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		}
 
 		if (this.data instanceof File) {
-			return true;
+			return (
+				findUploadRule(
+					this.plugin.settings.uploadRules,
+					this.data.name,
+				) != null
+			);
 		}
 
-		return !this.plugin.isExcludeFile(this.data.path);
+		return (
+			findUploadRule(
+				this.plugin.settings.uploadRules,
+				this.data.path,
+			) != null
+		);
 	}
 
 	downloadable(): boolean {
@@ -82,6 +97,18 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 
 	async upload(note: TFile) {
 		if (!this.uploadable()) {
+			if (this.linkType === "local") {
+				const fileName =
+					this.data instanceof File ? this.data.name : this.data.path;
+				if (
+					findUploadRule(
+						this.plugin.settings.uploadRules,
+						fileName,
+					) == null
+				) {
+					throw new Error(`No upload rule matched '${fileName}'.`);
+				}
+			}
 			throw new Error(
 				`Cannot upload '${
 					this.data instanceof File ? this.data.name : this.data.path
@@ -101,8 +128,20 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		}
 
 		const vars = getFormatVariables(file, note);
-		const path = formatPath(this.plugin.settings.format, vars);
-		const fileInfo = await this.plugin.client.uploadFile(file, path);
+		const target = resolveUploadTarget(
+			this.plugin.settings.uploadRules,
+			file.name,
+			this.plugin.settings.url,
+			vars,
+		);
+		if (target == null) {
+			throw new Error(`No upload rule matched '${file.name}'.`);
+		}
+		const fileInfo = await this.plugin.client.uploadFile(
+			file,
+			target.remotePath,
+			target.url,
+		);
 
 		return {
 			fileName: file.name,
@@ -137,13 +176,20 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			throw new Error("File can not be renamed.");
 		}
 
-		const oldPath = this.plugin.client.getPath(
-			(this.data as LinkInfo).path,
+		const oldUrl = (this.data as LinkInfo).path;
+		const oldPath = this.plugin.client.getPath(oldUrl);
+		const urlPrefix = getManagedUrlPrefix(
+			oldUrl,
+			this.plugin.settings.url,
+			this.plugin.settings.uploadRules,
 		);
+		if (urlPrefix == null) {
+			throw new Error(`No upload rule recognizes '${oldUrl}'.`);
+		}
 
 		await this.plugin.client.renameFile(oldPath, newPath);
 
-		return this.plugin.client.getUrl(newPath);
+		return buildManagedUrl(urlPrefix, newPath);
 	}
 
 	async delete(_note: TFile) {

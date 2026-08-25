@@ -4,37 +4,7 @@ import {
 	MarkdownView,
 	Notice,
 	moment,
-	normalizePath,
 } from "obsidian";
-
-// replace {{ key }} and {{ key:format }} with variables
-export function formatPath(
-	path: string,
-	variables: ReturnType<typeof getFormatVariables>,
-) {
-	const regex = /\{\{\s*(\w+)(?::([^}]+))?\s*\}\}/g;
-	const result = path.replace(regex, (match, key, format) => {
-		const varKey = key.toLowerCase() as keyof typeof variables;
-		const value = variables[varKey];
-		if (value == null) {
-			return match;
-		}
-
-		if (value.type === "string") {
-			return value.value as string;
-		}
-
-		if (value.type === "date") {
-			format = format ?? "YYYY-MM-DD HH:mm:ss";
-			return value.value.format(format);
-		}
-
-		return match;
-	});
-
-	// normalizePath() is always contains no leading `/`
-	return "/" + normalizePath(result);
-}
 
 export interface NoteInfo {
 	basename: string;
@@ -45,20 +15,32 @@ export interface NoteInfo {
 }
 
 export function getFormatVariables(file: File, note: NoteInfo) {
-	const [fileName, fileExtension] = file.name.split(".");
+	const dotIndex = file.name.lastIndexOf(".");
+	const fileName = dotIndex > 0 ? file.name.substring(0, dotIndex) : file.name;
+	const fileExtension =
+		dotIndex > 0 && dotIndex < file.name.length - 1
+			? file.name.substring(dotIndex + 1)
+			: "";
 	return {
-		name: { type: "string", value: fileName },
-		ext: { type: "string", value: fileExtension },
-		nameext: { type: "string", value: file.name },
-		mtime: { type: "date", value: moment(new Date(file.lastModified)) },
-		now: { type: "date", value: moment() },
-		notename: { type: "string", value: note.basename },
-		notectime: { type: "date", value: moment(new Date(note.stat.ctime)) },
-		notemtime: { type: "date", value: moment(new Date(note.stat.mtime)) },
+		name: { type: "string" as const, value: fileName },
+		ext: { type: "string" as const, value: fileExtension },
+		nameext: { type: "string" as const, value: file.name },
+		mtime: {
+			type: "date" as const,
+			value: moment(new Date(file.lastModified)),
+		},
+		now: { type: "date" as const, value: moment() },
+		notename: { type: "string" as const, value: note.basename },
+		notectime: {
+			type: "date" as const,
+			value: moment(new Date(note.stat.ctime)),
+		},
+		notemtime: {
+			type: "date" as const,
+			value: moment(new Date(note.stat.mtime)),
+		},
 	};
 }
-
-export type FormatVariables = ReturnType<typeof getFormatVariables>;
 
 export function replaceLink(
 	editor: Editor,
@@ -156,7 +138,7 @@ export function getFileType(fileName: string) {
 		return "attachment";
 	}
 
-	const fileExtension = fileName.substring(index + 1);
+	const fileExtension = fileName.substring(index + 1).toLowerCase();
 	if (fileExtension === "md") {
 		return "md";
 	}

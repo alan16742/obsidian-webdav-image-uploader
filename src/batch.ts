@@ -84,8 +84,7 @@ export class BatchUploader {
 
 	async uploadAttachments(folder: TFolder) {
 		const attachments = folder.children.filter(
-			(file) =>
-				file instanceof TFile && !this.plugin.isExcludeFile(file.path),
+			(file) => file instanceof TFile,
 		);
 		const noteAttachmentsMap = getNotesByAttachments(
 			attachments,
@@ -125,7 +124,6 @@ export class BatchUploader {
 		const content = await this.plugin.app.vault.read(note);
 		const links = matchLinks(content).filter(
 			(link) =>
-				!this.plugin.isExcludeFile(link.path) &&
 				isLocalPath(link.path) &&
 				(this.plugin.settings.enableDummyPdf ||
 					getFileType(link.path) !== "pdf"),
@@ -153,6 +151,16 @@ export class BatchUploader {
 					continue;
 				}
 
+				if (this.plugin.isExcludeFile(tFile.name)) {
+					this.result.push({
+						status: "skipped",
+						message: "No upload rule matched this file.",
+						note,
+						link: linkInfo,
+					});
+					continue;
+				}
+
 				// skip if already uploaded(when the file has been link by multiple notes),
 				// and reuse the uploaded url
 				let fileInfo = this.uploadedFiles.get(tFile);
@@ -172,7 +180,7 @@ export class BatchUploader {
 						newContent.substring(linkInfo.end);
 				}
 				this.result.push({
-					success: true,
+					status: "success",
 					note,
 					link: linkInfo,
 					newLink: fileInfo.url,
@@ -182,7 +190,7 @@ export class BatchUploader {
 			} catch (e) {
 				const message = `Failed to upload file '${linkInfo.path}' from ${note.path}, ${e}`;
 				this.result.push({
-					success: false,
+					status: "failed",
 					message,
 					note,
 					link: linkInfo,
@@ -280,7 +288,6 @@ export class BatchDownloader {
 			(link) =>
 				(!this.plugin.settings.enableDummyPdf ||
 					getFileType(link.path) !== "pdf") &&
-				!this.plugin.isExcludeFile(link.path) &&
 				this.plugin.isWebdavUrl(link.path),
 		);
 		const total = links.length;
@@ -310,7 +317,7 @@ export class BatchDownloader {
 				}
 
 				this.result.push({
-					success: true,
+					status: "success",
 					note,
 					link: linkInfo,
 					newLink: newLink.tFile.path,
@@ -318,7 +325,7 @@ export class BatchDownloader {
 			} catch (e) {
 				const message = `Failed to download file '${linkInfo.path}' from ${note.path}, ${e}`;
 				this.result.push({
-					success: false,
+					status: "failed",
 					message,
 					note,
 					link: linkInfo,
@@ -378,7 +385,7 @@ function getNotesByAttachments(attachments: TAbstractFile[], app: App) {
 }
 
 export interface BatchProcessFileResult {
-	success: boolean;
+	status: "success" | "failed" | "skipped";
 
 	message?: string;
 
@@ -416,12 +423,21 @@ export async function createBatchLog(
 			undefined,
 			note.basename,
 		)}\n\n`;
-		results.sort((a, b) =>
-			a.success === b.success ? 0 : a.success ? -1 : 1,
-		);
+		const statusOrder: Record<BatchProcessFileResult["status"], number> = {
+			success: 0,
+			skipped: 1,
+			failed: 2,
+		};
+		results.sort((a, b) => statusOrder[a.status] - statusOrder[b.status]);
 		content += headerRow + "\n" + separatorRow + "\n";
 		for (const result of results) {
-			content += `| ${result.success ? "✅" : "❌"} | ${
+			const statusIcon =
+				result.status === "success"
+					? "✅"
+					: result.status === "skipped"
+						? "⏭️"
+						: "❌";
+			content += `| ${statusIcon} | ${
 				result.link.path
 			} | ${result.newLink ?? ""} | ${result.message ?? ""} |\n`;
 		}

@@ -8,7 +8,7 @@ This is an Obsidian (https://obsidian.md) plugin for managing local images by st
 
 ### Upload, Download, and Delete Files
 
-- When pasting or dragging images into a note, the plugin will intercept the action, upload the image to the WebDAV server according to the configured path format (Plugin Settings -> Basic -> Path Format), and then insert a preview link for the image (`![file](https://yourdomain.com/dav/path/to/file.jpg)`). You can enable/disable it in the plugin settings, or execute `WebDAV Image Uploader: Toggle auto upload` command.
+- When pasting or dragging images into a note, the plugin will intercept the action, select the first matching upload rule, upload the image to the corresponding WebDAV path, and insert the generated preview link (`![file](https://yourdomain.com/dav/path/to/file.jpg)`). You can enable/disable it in the plugin settings, or execute `WebDAV Image Uploader: Toggle auto upload` command.
 - You can also right-click on a local image link (`![file](attachments/file.jpg)`) and select the `Upload file to WebDAV` option from the menu to upload the image and insert the link. You can configure whether to keep the local file after a successful upload.
 - When right-clicking a preview link, you can select `Download file from WebDAV` to download the image locally. The path is related to your Obsidian configuration (Settings -> Files & Links).
 - When right-clicking a preview link, you can select `Delete file from WebDAV` to delete the image from the WebDAV server and remove the link from the note.
@@ -29,7 +29,7 @@ In the file explorer, you can:
 
 ### Batch Process Log
 
-After performing batch upload/download operations, a log file named `webdav-batch-log-<timestamp>.md` will be created in the vault's root directory. This log file records the results of each file processed during the batch operation, you can check it to see which files were successfully processed and which ones failed. And you can enable/disable this feature in the plugin settings.
+After performing batch upload/download operations, a log file named `webdav-batch-log-<timestamp>.md` will be created in the vault's root directory. This log file records successful, skipped, and failed files, including files skipped because no upload rule matched. You can enable/disable this feature in the plugin settings.
 
 **Note: These batch process features have not been thoroughly tested (only run once in my vault). Please be sure to back up your vault before running them to prevent damage due to bugs.**
 
@@ -38,6 +38,20 @@ After performing batch upload/download operations, a log file named `webdav-batc
 When `Settings -> Enable Dummy PDF` is enabled, the plugin will create a [Dummy PDF](https://ryotaushio.github.io/obsidian-pdf-plus/external-pdf-files.html) file after PDF file is uploaded, then you can preview the PDFs stored on WebDAV server by [PDF++](https://github.com/RyotaUshio/obsidian-pdf-plus) plugin. You can also upload/download/delete PDF files in the same way as other files. (Thanks the idea from [here](https://github.com/Koishiiko/obsidian-webdav-image-uploader/issues/6))
 
 More details about the new features can be found in the [Release Page](https://github.com/Koishiiko/obsidian-webdav-image-uploader/releases).
+
+### Upload Rules
+
+Upload rules combine file filtering, public URL selection, and path formatting. Rules are checked from top to bottom, and the first rule whose configured filename prefix, filename suffix, and extensions all match is used. Empty prefix and suffix fields match any filename. Enabling **Any extension** makes the extension condition a wildcard. Files that do not match a rule are skipped.
+
+Each rule has a URL prefix and a link format. A blank URL prefix uses the main WebDAV URL. The link format must start with `{{url}}` and produces the complete link inserted into the note. For example:
+
+```text
+URL prefix:  https://img.example.com
+Link format: {{url}}/images/{{nameext}}
+Result:      https://img.example.com/images/photo.jpg
+```
+
+The public URL prefix must map paths one-to-one to the main WebDAV server. WebDAV upload, download, rename, and delete requests always use the main WebDAV URL; public URL prefixes are only used in note links.
 
 ## Others
 

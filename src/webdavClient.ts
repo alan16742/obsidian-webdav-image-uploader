@@ -2,6 +2,7 @@ import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
 import WebDavImageUploaderPlugin from "./main";
 import { getToken } from "./utils";
 import { WebDavImageUploaderSettings } from "./settings";
+import { extractRemotePath } from "./uploadRules";
 
 export class WebDavClient {
 	plugin: WebDavImageUploaderPlugin;
@@ -22,7 +23,7 @@ export class WebDavClient {
 		const path = this.getPath(url);
 		const fileName = path.split("/").pop()!;
 
-		const resp = await this.client.getFileContents(path);
+		const resp = await this.getFileContents(url);
 
 		const filePath =
 			await this.plugin.app.fileManager.getAvailablePathForAttachment(
@@ -32,7 +33,7 @@ export class WebDavClient {
 		return await this.plugin.app.vault.createBinary(filePath, resp);
 	}
 
-	async uploadFile(file: File, path: string): Promise<FileInfo> {
+	async uploadFile(file: File, path: string, url: string): Promise<FileInfo> {
 		const buffer = await file.arrayBuffer();
 
 		const success = await this.client.putFileContents(path, buffer);
@@ -41,7 +42,11 @@ export class WebDavClient {
 			throw new Error(`Failed to upload file: '${file.name}'`);
 		}
 
-		return { fileName: file.name, url: this.getUrl(path) };
+		return { fileName: file.name, url };
+	}
+
+	async getFileContents(url: string) {
+		return await this.client.getFileContents(this.getPath(url));
 	}
 
 	async renameFile(oldPath: string, newPath: string) {
@@ -71,17 +76,12 @@ export class WebDavClient {
 		await this.client.deleteFile(path);
 	}
 
-	getUrl(path: string) {
-		const domain =
-			this.plugin.settings.directLink !== ""
-				? this.plugin.settings.directLink
-				: this.plugin.settings.url;
-		return encodeURI(domain + path);
-	}
-
 	getPath(url: string) {
-		const index = url.indexOf("/", "https://".length + 1);
-		return decodeURI(url.substring(index));
+		return extractRemotePath(
+			url,
+			this.plugin.settings.url,
+			this.plugin.settings.uploadRules,
+		);
 	}
 }
 
@@ -95,12 +95,10 @@ export interface FileInfo {
  */
 class WebDavClientInner {
 	private baseUrl: string;
-	private directLink: string;
 	private authHeader: string;
 
 	constructor(settings: WebDavImageUploaderSettings) {
-		const { url, directLink, username, password } = settings;
-		this.directLink = directLink;
+		const { url, username, password } = settings;
 		this.baseUrl = url.endsWith("/") ? url.slice(0, -1) : url;
 		if (username && password) {
 			const credentials = getToken(username, password);
@@ -110,7 +108,10 @@ class WebDavClientInner {
 		}
 	}
 
-	async putFileContents(path: string, data: ArrayBuffer | string) {
+	async putFileContents(
+		path: string,
+		data: ArrayBuffer | string,
+	): Promise<boolean> {
 		const encodedPath = this.encodePath(path);
 		const url = this.buildUrl(encodedPath);
 
@@ -127,9 +128,7 @@ class WebDavClientInner {
 				path.substring(0, path.lastIndexOf("/")),
 			);
 
-			await this.putFileContents(path, data);
-
-			return;
+			return await this.putFileContents(path, data);
 		} else {
 			this.handleResponseCode(response);
 		}
@@ -139,7 +138,7 @@ class WebDavClientInner {
 
 	async getFileContents(path: string) {
 		const encodedPath = this.encodePath(path);
-		const url = this.buildUrl(encodedPath, true);
+		const url = this.buildUrl(encodedPath);
 
 		const response = await this.request({
 			url,
@@ -278,15 +277,11 @@ class WebDavClientInner {
 		});
 	}
 
-	private buildUrl(path: string, useDirectLink = false) {
+	private buildUrl(path: string) {
 		if (!path.startsWith("/")) {
 			path = "/" + path;
 		}
-		const base =
-			useDirectLink && this.directLink !== ""
-				? this.directLink
-				: this.baseUrl;
-		return base + path;
+		return this.baseUrl + path;
 	}
 
 	private encodePath(path: string) {

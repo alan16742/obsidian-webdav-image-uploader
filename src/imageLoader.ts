@@ -5,8 +5,6 @@ import {
 	ViewUpdate,
 } from "@codemirror/view";
 import type WebDavImageUploaderPlugin from "./main";
-import { requestUrl } from "obsidian";
-import { getToken } from "./utils";
 
 const loadingLight =
 	"data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI0OCIgaGVpZ2h0PSI0OCIgdmlld0JveD0iMCAwIDI0IDI0Ij48Y2lyY2xlIGN4PSIxMiIgY3k9IjEyIiByPSIzIiBzdHJva2U9IiMwMDAwMDAiIHN0cm9rZS13aWR0aD0iMiIgZmlsbD0ibm9uZSIgc3Ryb2tlLWRhc2hhcnJheT0iNiwgMzAiPjxhbmltYXRlVHJhbnNmb3JtIGF0dHJpYnV0ZU5hbWU9InRyYW5zZm9ybSIgdHlwZT0icm90YXRlIiBmcm9tPSIwIDEyIDEyIiB0bz0iMzYwIDEyIDEyIiBkdXI9IjFzIiByZXBlYXRDb3VudD0iaW5kZWZpbml0ZSIvPjwvY2lyY2xlPjwvc3ZnPg==";
@@ -104,15 +102,10 @@ export class WebDavImageLoader {
 		const isDarkMode = activeDocument.body.hasClass("theme-dark");
 		el.src = isDarkMode ? loadingDark : loadingLight;
 
-		// fetch the image with username and password
-		const { username, password } = this.plugin.settings;
-		const token = getToken(username, password);
-		const resp = await requestUrl({
-			url: url,
-			method: "GET",
-			headers: { Authorization: `Basic ${token}` },
-		});
-		const blob = new Blob([resp.arrayBuffer]);
+		// Resolve public rule URLs back to the main WebDAV server before
+		// authenticating, so credentials are never sent to a public URL prefix.
+		const contents = await this.plugin.client.getFileContents(url);
+		const blob = new Blob([contents]);
 
 		el.src = URL.createObjectURL(blob);
 		el.setAttribute("loaded", "true");
