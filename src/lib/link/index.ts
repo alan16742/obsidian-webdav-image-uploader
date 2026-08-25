@@ -1,5 +1,5 @@
-import WebDavImageUploaderPlugin from "../main";
-import { FileType, getFileType } from "../utils";
+import WebDavImageUploaderPlugin from "../../main";
+import { FileType, getFileType } from "../../utils";
 import { Link, LinkData } from "./types";
 import { LinkFactory } from "./types";
 import imageLinkFactory from "./image";

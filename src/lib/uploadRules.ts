@@ -343,6 +343,6 @@ function stringValue(value: unknown): string {
 	return typeof value === "string" ? value : "";
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
+export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value != null && !Array.isArray(value);
 }

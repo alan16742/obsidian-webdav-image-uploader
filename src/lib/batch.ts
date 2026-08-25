@@ -6,8 +6,8 @@ import {
 	isLocalPath,
 	matchLinks,
 	noticeError,
-} from "./utils";
-import WebDavImageUploaderPlugin from "./main";
+} from "../utils";
+import WebDavImageUploaderPlugin from "../main";
 import { createLink, UploadFileInfo } from "./link";
 
 export class BatchUploader {

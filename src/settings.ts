@@ -7,19 +7,17 @@ import {
 	Setting,
 } from "obsidian";
 import WebDavImageUploaderPlugin from "./main";
-import { getFormatVariables } from "./utils";
-import { BatchUploader, BatchDownloader } from "./batch";
+import { BatchUploader, BatchDownloader } from "./lib/batch";
 import {
-	buildUploadTarget,
+	isRecord,
 	createDefaultUploadRule,
-	normalizeExtension,
-	normalizeUploadRule,
 	sanitizeUploadRules,
 	TEMPLATE_VARIABLE_NAMES,
 	UploadRule,
-} from "./uploadRules";
+} from "./lib/uploadRules";
+import { UploadRuleSettingRenderer } from "./ui/uploadRuleSettings";
 
-export type { UploadRule } from "./uploadRules";
+export type { UploadRule } from "./lib/uploadRules";
 
 export interface WebDavImageUploaderSettings {
 	// Basic
@@ -30,9 +28,9 @@ export interface WebDavImageUploaderSettings {
 
 	// Upload
 	enableUpload: boolean;
-	uploadRules: UploadRule[];
 	uploadedFileOperation: "default" | "delete" | "none";
 	enableDummyPdf?: boolean;
+	uploadRules: UploadRule[];
 
 	// Batch processes
 	createBatchLog: boolean;
@@ -45,45 +43,63 @@ export const DEFAULT_SETTINGS: WebDavImageUploaderSettings = {
 	disableBasicAuth: false,
 
 	enableUpload: true,
-	uploadRules: [createDefaultUploadRule()],
 	uploadedFileOperation: "delete",
 	enableDummyPdf: false,
+	uploadRules: [
+		{
+			prefix: "",
+			suffix: "",
+			extensions: [
+				"jpg",
+				"jpeg",
+				"png",
+				"gif",
+				"svg",
+				"webp",
+			],
+			urlPrefix: "",
+			linkFormat: "{{url}}/{{nameext}}",
+		},
+	],
 
 	createBatchLog: true,
 };
 
 export function sanitizeSettings(data: unknown): WebDavImageUploaderSettings {
 	const source = isRecord(data) ? data : {};
-	const uploadRules = sanitizeUploadRules(source);
-	const uploadedFileOperation = ["default", "delete", "none"].includes(
-		stringValue(source.uploadedFileOperation),
-	)
-		? (source.uploadedFileOperation as WebDavImageUploaderSettings["uploadedFileOperation"])
-		: DEFAULT_SETTINGS.uploadedFileOperation;
-
-	return {
-		url: stringValue(source.url, DEFAULT_SETTINGS.url),
-		username: stringValue(source.username, DEFAULT_SETTINGS.username),
-		password: stringValue(source.password, DEFAULT_SETTINGS.password),
-		disableBasicAuth: booleanValue(
-			source.disableBasicAuth,
-			DEFAULT_SETTINGS.disableBasicAuth ?? false,
-		),
-		enableUpload: booleanValue(
-			source.enableUpload,
-			DEFAULT_SETTINGS.enableUpload,
-		),
-		uploadRules,
-		uploadedFileOperation,
-		enableDummyPdf: booleanValue(
-			source.enableDummyPdf,
-			DEFAULT_SETTINGS.enableDummyPdf ?? false,
-		),
-		createBatchLog: booleanValue(
-			source.createBatchLog,
-			DEFAULT_SETTINGS.createBatchLog,
-		),
+	const settings: WebDavImageUploaderSettings = {
+		...DEFAULT_SETTINGS,
+		uploadRules: sanitizeUploadRules(source),
 	};
+
+	for (const key of ["url", "username", "password"] as const) {
+		const value = source[key];
+		if (typeof value === "string") {
+			settings[key] = value;
+		}
+	}
+
+	for (const key of [
+		"disableBasicAuth",
+		"enableUpload",
+		"enableDummyPdf",
+		"createBatchLog",
+	] as const) {
+		const value = source[key];
+		if (typeof value === "boolean") {
+			settings[key] = value;
+		}
+	}
+
+	const uploadedFileOperation = source.uploadedFileOperation;
+	if (
+		uploadedFileOperation === "default" ||
+		uploadedFileOperation === "delete" ||
+		uploadedFileOperation === "none"
+	) {
+		settings.uploadedFileOperation = uploadedFileOperation;
+	}
+	return settings;
 }
 
 export class WebDavImageUploaderSettingTab extends PluginSettingTab {
@@ -91,7 +107,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 
 	saveSettings: Debouncer<[], () => Promise<void>>;
 
-	expandedUploadRules = new Set<UploadRule>();
+	uploadRuleSettingRenderer: UploadRuleSettingRenderer;
 
 	constructor(app: App, plugin: WebDavImageUploaderPlugin) {
 		super(app, plugin);
@@ -100,6 +116,14 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 		this.saveSettings = debounce(
 			this.plugin.saveSettings.bind(this.plugin),
 			200
+		);
+		this.uploadRuleSettingRenderer = new UploadRuleSettingRenderer(
+			this.app,
+			this.plugin,
+			() => {
+				this.saveSettings();
+			},
+			this.display.bind(this),
 		);
 	}
 
@@ -267,7 +291,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 
 		const rulesEl = containerEl.createDiv("webdav-upload-rules");
 		this.plugin.settings.uploadRules.forEach((rule, index) =>
-			this.renderUploadRule(rulesEl, rule, index),
+			this.uploadRuleSettingRenderer.renderUploadRule(rulesEl, rule, index),
 		);
 
 		new Setting(containerEl)
@@ -281,7 +305,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 						const rule = createDefaultUploadRule();
 						rule.extensions = ["jpg"];
 						this.plugin.settings.uploadRules.push(rule);
-						this.saveAndRedisplay();
+						this.uploadRuleSettingRenderer.saveAndRedisplay();
 					}),
 			);
 
@@ -309,241 +333,6 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 			item.createEl("code", { text: `{{${variable}}}` });
 			item.appendText(` — ${descriptions[variable]}`);
 		}
-	}
-
-	renderUploadRule(containerEl: HTMLElement, rule: UploadRule, index: number) {
-		const cardEl = containerEl.createEl("details", {
-			cls: "webdav-upload-rule",
-		});
-		cardEl.open = this.expandedUploadRules.has(rule);
-		cardEl.addEventListener("toggle", () => {
-			if (cardEl.open) {
-				this.expandedUploadRules.add(rule);
-			} else {
-				this.expandedUploadRules.delete(rule);
-			}
-		});
-		const summaryEl = cardEl.createEl("summary", {
-			cls: "webdav-upload-rule-summary",
-		});
-		summaryEl.createSpan({
-			cls: "webdav-upload-rule-title",
-			text: `Rule ${index + 1}`,
-		});
-		const summaryPreviewEl = summaryEl.createSpan({
-			cls: "webdav-upload-rule-preview",
-			text: this.getUploadRuleSummary(rule),
-		});
-		const contentEl = cardEl.createDiv("webdav-upload-rule-content");
-		const rules = this.plugin.settings.uploadRules;
-		new Setting(contentEl)
-			.setName("Rule actions")
-			.setDesc("All configured match conditions must match.")
-			.addButton((button) =>
-				button
-					.setButtonText("Up")
-					.setDisabled(index === 0)
-					.onClick(() => {
-						[rules[index - 1], rules[index]] = [rules[index], rules[index - 1]];
-						this.saveAndRedisplay();
-					}),
-			)
-			.addButton((button) =>
-				button
-					.setButtonText("Down")
-					.setDisabled(index === rules.length - 1)
-					.onClick(() => {
-						[rules[index], rules[index + 1]] = [rules[index + 1], rules[index]];
-						this.saveAndRedisplay();
-					}),
-			)
-			.addButton((button) =>
-				button.setButtonText("Duplicate").onClick(() => {
-					rules.splice(index + 1, 0, normalizeUploadRule(rule));
-					this.saveAndRedisplay();
-				}),
-			)
-			.addButton((button) =>
-				button
-					.setButtonText("Delete")
-					.setWarning()
-					.onClick(() => {
-						this.expandedUploadRules.delete(rule);
-						rules.splice(index, 1);
-						this.saveAndRedisplay();
-					}),
-			);
-
-		new Setting(contentEl)
-			.setName("Filename starts with")
-			.setDesc("Optional; matched without the extension.")
-			.addText((text) =>
-				text
-					.setPlaceholder("IMG_")
-					.setValue(rule.prefix)
-					.onChange((value) => {
-						rule.prefix = value;
-						this.saveSettings();
-					}),
-			);
-		new Setting(contentEl)
-			.setName("Filename ends with")
-			.setDesc("Optional; matched without the extension.")
-			.addText((text) =>
-				text
-					.setPlaceholder("_thumb")
-					.setValue(rule.suffix)
-					.onChange((value) => {
-						rule.suffix = value;
-						this.saveSettings();
-					}),
-			);
-
-		new Setting(contentEl)
-			.setName("Any extension")
-			.setDesc("Ignore file extensions when matching.")
-			.addToggle((toggle) =>
-				toggle.setValue(rule.extensions.length === 0).onChange((value) => {
-					rule.extensions = value ? [] : ["jpg"];
-					this.saveAndRedisplay();
-				}),
-			);
-
-		if (rule.extensions.length > 0) {
-			const extensionSetting = new Setting(contentEl)
-				.setName("Extensions")
-				.setDesc("Press Enter or Add; dots and case are normalized.");
-			const controlsEl = extensionSetting.controlEl.createDiv(
-				"webdav-upload-rule-extension-controls",
-			);
-			const tagsEl = controlsEl.createDiv("webdav-upload-rule-tags");
-			for (const extension of rule.extensions) {
-				const tag = tagsEl.createEl("button", {
-					cls: "webdav-upload-rule-tag",
-					text: `${extension} ×`,
-					attr: { type: "button", "aria-label": `Remove ${extension}` },
-				});
-				tag.addEventListener("click", () => {
-					if (rule.extensions.length === 1) {
-						new Notice(
-							"Keep at least one extension, or enable Any extension.",
-						);
-						return;
-					}
-					rule.extensions = rule.extensions.filter(
-						(value) => value !== extension,
-					);
-					this.saveAndRedisplay();
-				});
-			}
-			const addEl = controlsEl.createDiv("webdav-upload-rule-extension-add");
-			const inputEl = addEl.createEl("input", {
-				type: "text",
-				placeholder: "jpg, png",
-			});
-			const addExtensions = () => {
-				const additions = inputEl.value
-					.split(/[,\s]+/)
-					.map(normalizeExtension)
-					.filter((extension) => extension !== "");
-				rule.extensions = Array.from(
-					new Set([...rule.extensions, ...additions]),
-				);
-				if (additions.length > 0) {
-					this.saveAndRedisplay();
-				}
-			};
-			inputEl.addEventListener("keydown", (event) => {
-				if (event.key === "Enter") {
-					event.preventDefault();
-					addExtensions();
-				}
-			});
-			const addButton = addEl.createEl("button", {
-				text: "Add",
-				attr: { type: "button" },
-			});
-			addButton.addEventListener("click", addExtensions);
-		}
-
-		new Setting(contentEl)
-			.setName("URL prefix")
-			.setDesc("Leave blank to use the main WebDAV URL.")
-			.addText((text) =>
-				text
-					.setPlaceholder("https://img.example.com")
-					.setValue(rule.urlPrefix)
-					.onChange((value) => {
-						rule.urlPrefix = value;
-						this.saveSettings();
-					}),
-			);
-
-		let formatInput: HTMLInputElement | null = null;
-		new Setting(contentEl)
-			.setName("Link format")
-			.setDesc("Must start with {{url}} and produce the complete public URL.")
-			.addText((text) => {
-				formatInput = text.inputEl;
-				text
-					.setPlaceholder("{{url}}/images/{{nameext}}")
-					.setValue(rule.linkFormat)
-					.onChange((value) => {
-						rule.linkFormat = value;
-						this.saveSettings();
-					});
-			})
-			.addDropdown((dropdown) => {
-				dropdown.addOption("", "Insert variable…");
-				for (const variable of TEMPLATE_VARIABLE_NAMES) {
-					dropdown.addOption(variable, `{{${variable}}}`);
-				}
-				dropdown.onChange((variable) => {
-					if (variable === "" || formatInput == null) {
-						return;
-					}
-					const token = `{{${variable}}}`;
-					formatInput.setRangeText(
-						token,
-						formatInput.selectionStart ?? formatInput.value.length,
-						formatInput.selectionEnd ?? formatInput.value.length,
-						"end",
-					);
-					rule.linkFormat = formatInput.value;
-					this.saveSettings();
-					dropdown.setValue("");
-				});
-			});
-	}
-
-	getUploadRuleSummary(rule: UploadRule) {
-		const conditions: string[] = [];
-		conditions.push(
-			rule.extensions.length === 0
-				? "any extension"
-				: rule.extensions.join(", "),
-		);
-		const extension = rule.extensions[0] ?? "ext";
-		const exampleName = `${rule.prefix}file${rule.suffix}.${extension}`;
-		const now = Date.now();
-		const variables = getFormatVariables(
-			new File([""], exampleName, { lastModified: now }),
-			this.app.workspace.getActiveFile() ?? {
-				basename: "test-note",
-				stat: { ctime: now, mtime: now },
-			},
-		);			
-		const target = buildUploadTarget(
-			rule,
-			this.plugin.settings.url,
-			variables,
-		);
-		return `${conditions.join(" · ")} → ${target.url}`;
-	}
-
-	saveAndRedisplay() {
-		this.saveSettings();
-		this.display();
 	}
 
 	batch() {
@@ -619,16 +408,4 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					})
 			);
 	}
-}
-
-function stringValue(value: unknown, fallback = ""): string {
-	return typeof value === "string" ? value : fallback;
-}
-
-function booleanValue(value: unknown, fallback: boolean): boolean {
-	return typeof value === "boolean" ? value : fallback;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value != null && !Array.isArray(value);
 }

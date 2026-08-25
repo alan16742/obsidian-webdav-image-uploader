@@ -1,11 +1,11 @@
 import { TFile } from "obsidian";
-import WebDavImageUploaderPlugin from "../main";
+import WebDavImageUploaderPlugin from "../../main";
 import {
 	getFileByPath,
 	getFormatVariables,
 	isLocalPath,
 	LinkInfo,
-} from "../utils";
+} from "../../utils";
 import {
 	buildManagedUrl,
 	findUploadRule,

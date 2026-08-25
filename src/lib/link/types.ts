@@ -1,6 +1,6 @@
-import { FileType, LinkInfo } from "../utils";
+import { FileType, LinkInfo } from "../../utils";
 import { TFile } from "obsidian";
-import WebDavImageUploaderPlugin from "../main";
+import WebDavImageUploaderPlugin from "../../main";
 
 export interface Link<T extends LinkData> {
 	data: T;

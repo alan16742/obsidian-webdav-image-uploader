@@ -8,8 +8,8 @@ import {
 	TFile,
 	TFolder,
 } from "obsidian";
-import { WebDavClient } from "./webdavClient";
-import { createWebDavImageExtension, WebDavImageLoader } from "./imageLoader";
+import { WebDavClient } from "./lib/webdavClient";
+import { createWebDavImageExtension, WebDavImageLoader } from "./view/imageLoader";
 import {
 	getCurrentEditor,
 	noticeError,
@@ -22,11 +22,11 @@ import {
 	WebDavImageUploaderSettings,
 	WebDavImageUploaderSettingTab,
 } from "./settings";
-import { BatchDownloader, BatchUploader } from "./batch";
-import { ConfirmModal } from "./modals/confirmModal";
-import { Link, createLink } from "./link";
-import { getRenamePath } from "./modals/renameModal";
-import { findUploadRule, isManagedUrl } from "./uploadRules";
+import { BatchDownloader, BatchUploader } from "./lib/batch";
+import { ConfirmModal } from "./ui/modals/confirmModal";
+import { Link, createLink } from "./lib/link";
+import { getRenamePath } from "./ui/modals/renameModal";
+import { findUploadRule, isManagedUrl } from "./lib/uploadRules";
 
 export default class WebDavImageUploaderPlugin extends Plugin {
 	settings: WebDavImageUploaderSettings;

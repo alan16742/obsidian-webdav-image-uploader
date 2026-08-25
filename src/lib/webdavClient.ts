@@ -1,7 +1,7 @@
 import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
-import WebDavImageUploaderPlugin from "./main";
-import { getToken } from "./utils";
-import { WebDavImageUploaderSettings } from "./settings";
+import WebDavImageUploaderPlugin from "../main";
+import { getToken } from "../utils";
+import { WebDavImageUploaderSettings } from "../settings";
 import { extractRemotePath } from "./uploadRules";
 
 export class WebDavClient {

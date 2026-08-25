@@ -1,8 +1,8 @@
-import WebDavImageUploaderPlugin from "../main";
+import WebDavImageUploaderPlugin from "../../main";
 import { AttachmentLink } from "./attachment";
 import { TFile } from "obsidian";
 import { LinkData, LinkFactory } from "./types";
-import { FileType } from "src/utils";
+import { FileType } from "../../utils";
 
 const factory: LinkFactory = {
 	create<T extends LinkData>(
