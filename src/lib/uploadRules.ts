@@ -23,14 +23,6 @@ export interface UploadTarget {
 	url: string;
 }
 
-export const DEFAULT_UPLOAD_RULE: UploadRule = {
-	prefix: "",
-	suffix: "",
-	extensions: ["jpg", "jpeg", "png", "gif", "svg", "webp"],
-	urlPrefix: "",
-	linkFormat: "{{url}}/{{nameext}}",
-};
-
 export const TEMPLATE_VARIABLE_NAMES = [
 	"url",
 	"name",
@@ -48,8 +40,11 @@ const URL_VARIABLE_AT_START_PATTERN = /^\s*\{\{\s*url\s*\}\}/i;
 
 export function createDefaultUploadRule(): UploadRule {
 	return {
-		...DEFAULT_UPLOAD_RULE,
-		extensions: [...DEFAULT_UPLOAD_RULE.extensions],
+		prefix: "",
+		suffix: "",
+		extensions: ["jpg"],
+		urlPrefix: "",
+		linkFormat: "{{url}}/{{nameext}}",
 	};
 }
 
@@ -65,13 +60,13 @@ export function normalizeUploadRule(value: unknown): UploadRule {
 	const source = isRecord(value) ? value : {};
 	const extensions = Array.isArray(source.extensions)
 		? source.extensions
-				.filter((extension): extension is string =>
-					typeof extension === "string",
-				)
-				.map(normalizeExtension)
-				.filter((extension, index, values) =>
-					extension !== "" && values.indexOf(extension) === index,
-				)
+			.filter((extension): extension is string =>
+				typeof extension === "string",
+			)
+			.map(normalizeExtension)
+			.filter((extension, index, values) =>
+				extension !== "" && values.indexOf(extension) === index,
+			)
 		: [];
 
 	return {

@@ -105,7 +105,7 @@ export function sanitizeSettings(data: unknown): WebDavImageUploaderSettings {
 export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 	plugin: WebDavImageUploaderPlugin;
 
-	saveSettings: Debouncer<[], () => Promise<void>>;
+	saveSettings: Debouncer<[], Promise<void>>;
 
 	uploadRuleSettingRenderer: UploadRuleSettingRenderer;
 
@@ -123,7 +123,6 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 			() => {
 				this.saveSettings();
 			},
-			this.display.bind(this),
 		);
 	}
 
@@ -290,9 +289,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 			.setHeading();
 
 		const rulesEl = containerEl.createDiv("webdav-upload-rules");
-		this.plugin.settings.uploadRules.forEach((rule, index) =>
-			this.uploadRuleSettingRenderer.renderUploadRule(rulesEl, rule, index),
-		);
+		this.uploadRuleSettingRenderer.renderUploadRules(rulesEl);
 
 		new Setting(containerEl)
 			.setName("Add upload rule")
@@ -303,9 +300,8 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					.setCta()
 					.onClick(() => {
 						const rule = createDefaultUploadRule();
-						rule.extensions = ["jpg"];
 						this.plugin.settings.uploadRules.push(rule);
-						this.uploadRuleSettingRenderer.saveAndRedisplay();
+						this.uploadRuleSettingRenderer.saveAndRefresh();
 					}),
 			);
 

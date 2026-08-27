@@ -16,7 +16,7 @@ const loadingDark =
 class WebDavImageLoaderExtension implements PluginValue {
 	plugin: WebDavImageUploaderPlugin;
 
-	mutationObserver: MutationObserver;
+	mutationObserver!: MutationObserver;
 
 	images: Set<HTMLImageElement>;
 

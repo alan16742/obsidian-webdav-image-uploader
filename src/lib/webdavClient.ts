@@ -6,7 +6,7 @@ import { extractRemotePath } from "./uploadRules";
 
 export class WebDavClient {
 	plugin: WebDavImageUploaderPlugin;
-	client: WebDavClientInner;
+	client!: WebDavClientInner;
 
 	constructor(plugin: WebDavImageUploaderPlugin) {
 		this.plugin = plugin;

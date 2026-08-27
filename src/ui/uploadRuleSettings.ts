@@ -9,20 +9,75 @@ import {
 	UploadRule,
 } from "../lib/uploadRules";
 
+interface UploadRuleCard {
+	cardEl: HTMLDetailsElement;
+	titleEl: HTMLSpanElement;
+	previewEl: HTMLSpanElement;
+	upButton: HTMLButtonElement;
+	downButton: HTMLButtonElement;
+}
+
 export class UploadRuleSettingRenderer {
 	private expandedUploadRules = new Set<UploadRule>();
+	private ruleCards = new Map<UploadRule, UploadRuleCard>();
+	private rulesContainerEl: HTMLElement | null = null;
 
 	constructor(
 		private app: App,
 		private plugin: WebDavImageUploaderPlugin,
 		private saveSettings: () => void,
-		private redisplay: () => void,
-	) {}
+	) { }
 
-	renderUploadRule(containerEl: HTMLElement, rule: UploadRule, index: number) {
-		const cardEl = containerEl.createEl("details", {
-			cls: "webdav-upload-rule",
+	renderUploadRules(containerEl: HTMLElement) {
+		if (this.rulesContainerEl !== containerEl) {
+			this.ruleCards.clear();
+			this.rulesContainerEl = containerEl;
+		}
+		this.refreshUploadRules();
+	}
+
+	private refreshUploadRules(focusRule?: UploadRule) {
+		const containerEl = this.rulesContainerEl;
+		if (containerEl == null) {
+			return;
+		}
+
+		const rules = this.plugin.settings.uploadRules;
+		const activeRules = new Set(rules);
+		for (const [rule, card] of this.ruleCards) {
+			if (!activeRules.has(rule)) {
+				card.cardEl.remove();
+				this.ruleCards.delete(rule);
+			}
+		}
+
+		rules.forEach((rule, index) => {
+			let card = this.ruleCards.get(rule);
+			if (card == null) {
+				card = this.createUploadRuleCard(rule);
+				this.ruleCards.set(rule, card);
+			}
+
+			card.titleEl.textContent = `Rule ${index + 1}`;
+			card.upButton.disabled = index === 0;
+			card.downButton.disabled = index === rules.length - 1;
+
+			const currentChild = containerEl.children[index];
+			if (currentChild !== card.cardEl) {
+				containerEl.insertBefore(card.cardEl, currentChild ?? null);
+			}
 		});
+
+		if (focusRule != null) {
+			this.ruleCards.get(focusRule)?.cardEl
+				.querySelector<HTMLElement>("summary")
+				?.focus();
+		}
+	}
+
+	private createUploadRuleCard(rule: UploadRule): UploadRuleCard {
+		const cardEl = document.createElement("details");
+		cardEl.className = "webdav-upload-rule";
 		cardEl.open = this.expandedUploadRules.has(rule);
 		cardEl.addEventListener("toggle", () => {
 			if (cardEl.open) {
@@ -31,44 +86,78 @@ export class UploadRuleSettingRenderer {
 				this.expandedUploadRules.delete(rule);
 			}
 		});
-		const summaryEl = cardEl.createEl("summary", {
-			cls: "webdav-upload-rule-summary",
-		});
-		summaryEl.createSpan({
-			cls: "webdav-upload-rule-title",
-			text: `Rule ${index + 1}`,
-		});
-		summaryEl.createSpan({
-			cls: "webdav-upload-rule-preview",
-			text: this.getUploadRuleSummary(rule),
-		});
-		const contentEl = cardEl.createDiv("webdav-upload-rule-content");
-		const rules = this.plugin.settings.uploadRules;
+
+		const summaryEl = document.createElement("summary");
+		summaryEl.className = "webdav-upload-rule-summary";
+		const titleEl = document.createElement("span");
+		titleEl.className = "webdav-upload-rule-title";
+		summaryEl.appendChild(titleEl);
+		const previewEl = document.createElement("span");
+		previewEl.className = "webdav-upload-rule-preview";
+		summaryEl.appendChild(previewEl);
+		cardEl.appendChild(summaryEl);
+
+		const contentEl = document.createElement("div");
+		contentEl.className = "webdav-upload-rule-content";
+		cardEl.appendChild(contentEl);
+
+		const refreshSummary = () => {
+			previewEl.textContent = this.getUploadRuleSummary(rule);
+		};
+		refreshSummary();
+
+		let upButton: HTMLButtonElement;
+		let downButton: HTMLButtonElement;
+		const getRules = () => this.plugin.settings.uploadRules;
+		const getRuleIndex = () => getRules().indexOf(rule);
+		const extensionsContainerEl = document.createElement("div");
+
 		new Setting(contentEl)
 			.setName("Rule actions")
 			.setDesc("All configured match conditions must match.")
-			.addButton((button) =>
+			.addButton((button) => {
+				upButton = button.buttonEl;
 				button
 					.setButtonText("Up")
-					.setDisabled(index === 0)
 					.onClick(() => {
-						[rules[index - 1], rules[index]] = [rules[index], rules[index - 1]];
-						this.saveAndRedisplay();
-					}),
-			)
-			.addButton((button) =>
+						const rules = getRules();
+						const index = getRuleIndex();
+						if (index <= 0) {
+							return;
+						}
+						[rules[index - 1], rules[index]] = [
+							rules[index],
+							rules[index - 1],
+						];
+						this.saveAndRefresh();
+					});
+			})
+			.addButton((button) => {
+				downButton = button.buttonEl;
 				button
 					.setButtonText("Down")
-					.setDisabled(index === rules.length - 1)
 					.onClick(() => {
-						[rules[index], rules[index + 1]] = [rules[index + 1], rules[index]];
-						this.saveAndRedisplay();
-					}),
-			)
+						const rules = getRules();
+						const index = getRuleIndex();
+						if (index < 0 || index >= rules.length - 1) {
+							return;
+						}
+						[rules[index], rules[index + 1]] = [
+							rules[index + 1],
+							rules[index],
+						];
+						this.saveAndRefresh();
+					});
+			})
 			.addButton((button) =>
 				button.setButtonText("Duplicate").onClick(() => {
+					const rules = getRules();
+					const index = getRuleIndex();
+					if (index < 0) {
+						return;
+					}
 					rules.splice(index + 1, 0, normalizeUploadRule(rule));
-					this.saveAndRedisplay();
+					this.saveAndRefresh();
 				}),
 			)
 			.addButton((button) =>
@@ -76,9 +165,16 @@ export class UploadRuleSettingRenderer {
 					.setButtonText("Delete")
 					.setWarning()
 					.onClick(() => {
+						const rules = getRules();
+						const index = getRuleIndex();
+						if (index < 0) {
+							return;
+						}
 						this.expandedUploadRules.delete(rule);
+						const focusRule =
+							rules[index + 1] ?? rules[index - 1];
 						rules.splice(index, 1);
-						this.saveAndRedisplay();
+						this.saveAndRefresh(focusRule);
 					}),
 			);
 
@@ -91,6 +187,7 @@ export class UploadRuleSettingRenderer {
 					.setValue(rule.prefix)
 					.onChange((value) => {
 						rule.prefix = value;
+						refreshSummary();
 						this.saveSettings();
 					}),
 			);
@@ -103,6 +200,7 @@ export class UploadRuleSettingRenderer {
 					.setValue(rule.suffix)
 					.onChange((value) => {
 						rule.suffix = value;
+						refreshSummary();
 						this.saveSettings();
 					}),
 			);
@@ -113,66 +211,18 @@ export class UploadRuleSettingRenderer {
 			.addToggle((toggle) =>
 				toggle.setValue(rule.extensions.length === 0).onChange((value) => {
 					rule.extensions = value ? [] : ["jpg"];
-					this.saveAndRedisplay();
+					this.renderExtensions(
+						extensionsContainerEl,
+						rule,
+						refreshSummary,
+					);
+					refreshSummary();
+					this.saveSettings();
 				}),
 			);
 
-		if (rule.extensions.length > 0) {
-			const extensionSetting = new Setting(contentEl)
-				.setName("Extensions")
-				.setDesc("Press Enter or Add; dots and case are normalized.");
-			const controlsEl = extensionSetting.controlEl.createDiv(
-				"webdav-upload-rule-extension-controls",
-			);
-			const tagsEl = controlsEl.createDiv("webdav-upload-rule-tags");
-			for (const extension of rule.extensions) {
-				const tag = tagsEl.createEl("button", {
-					cls: "webdav-upload-rule-tag",
-					text: `${extension} ×`,
-					attr: { type: "button", "aria-label": `Remove ${extension}` },
-				});
-				tag.addEventListener("click", () => {
-					if (rule.extensions.length === 1) {
-						new Notice(
-							"Keep at least one extension, or enable Any extension.",
-						);
-						return;
-					}
-					rule.extensions = rule.extensions.filter(
-						(value) => value !== extension,
-					);
-					this.saveAndRedisplay();
-				});
-			}
-			const addEl = controlsEl.createDiv("webdav-upload-rule-extension-add");
-			const inputEl = addEl.createEl("input", {
-				type: "text",
-				placeholder: "jpg, png",
-			});
-			const addExtensions = () => {
-				const additions = inputEl.value
-					.split(/[,\s]+/)
-					.map(normalizeExtension)
-					.filter((extension) => extension !== "");
-				rule.extensions = Array.from(
-					new Set([...rule.extensions, ...additions]),
-				);
-				if (additions.length > 0) {
-					this.saveAndRedisplay();
-				}
-			};
-			inputEl.addEventListener("keydown", (event) => {
-				if (event.key === "Enter") {
-					event.preventDefault();
-					addExtensions();
-				}
-			});
-			const addButton = addEl.createEl("button", {
-				text: "Add",
-				attr: { type: "button" },
-			});
-			addButton.addEventListener("click", addExtensions);
-		}
+		contentEl.appendChild(extensionsContainerEl);
+		this.renderExtensions(extensionsContainerEl, rule, refreshSummary);
 
 		new Setting(contentEl)
 			.setName("URL prefix")
@@ -183,6 +233,7 @@ export class UploadRuleSettingRenderer {
 					.setValue(rule.urlPrefix)
 					.onChange((value) => {
 						rule.urlPrefix = value;
+						refreshSummary();
 						this.saveSettings();
 					}),
 			);
@@ -198,6 +249,7 @@ export class UploadRuleSettingRenderer {
 					.setValue(rule.linkFormat)
 					.onChange((value) => {
 						rule.linkFormat = value;
+						refreshSummary();
 						this.saveSettings();
 					});
 			})
@@ -218,10 +270,102 @@ export class UploadRuleSettingRenderer {
 						"end",
 					);
 					rule.linkFormat = formatInput.value;
+					refreshSummary();
 					this.saveSettings();
 					dropdown.setValue("");
 				});
 			});
+
+		return {
+			cardEl,
+			titleEl,
+			previewEl,
+			upButton: upButton!,
+			downButton: downButton!,
+		};
+	}
+
+	private renderExtensions(
+		containerEl: HTMLElement,
+		rule: UploadRule,
+		refreshSummary: () => void,
+	) {
+		containerEl.empty();
+		if (rule.extensions.length === 0) {
+			return;
+		}
+
+		const extensionSetting = new Setting(containerEl)
+			.setName("Extensions")
+			.setDesc("Press Enter or Add; dots and case are normalized.");
+		const controlsEl = extensionSetting.controlEl.createDiv(
+			"webdav-upload-rule-extension-controls",
+		);
+		const tagsEl = controlsEl.createDiv("webdav-upload-rule-tags");
+		const addEl = controlsEl.createDiv("webdav-upload-rule-extension-add");
+		const inputEl = addEl.createEl("input", {
+			type: "text",
+			placeholder: "jpg, png",
+		});
+
+		const renderTags = (focusExtension?: string) => {
+			tagsEl.empty();
+			for (const extension of rule.extensions) {
+				const tag = tagsEl.createEl("button", {
+					cls: "webdav-upload-rule-tag",
+					text: `${extension} ×`,
+					attr: { type: "button", "aria-label": `Remove ${extension}` },
+				});
+				if (extension === focusExtension) {
+					tag.focus();
+				}
+				tag.addEventListener("click", () => {
+					if (rule.extensions.length === 1) {
+						new Notice(
+							"Keep at least one extension, or enable Any extension.",
+						);
+						return;
+					}
+					const removedIndex = rule.extensions.indexOf(extension);
+					const nextFocusExtension =
+						rule.extensions[removedIndex + 1] ??
+						rule.extensions[removedIndex - 1];
+					rule.extensions = rule.extensions.filter(
+						(value) => value !== extension,
+					);
+					renderTags(nextFocusExtension);
+					refreshSummary();
+					this.saveSettings();
+				});
+			}
+		};
+		renderTags();
+
+		const addExtensions = () => {
+			const additions = inputEl.value
+				.split(/[,\s]+/)
+				.map(normalizeExtension)
+				.filter((extension) => extension !== "");
+			if (additions.length === 0) {
+				return;
+			}
+			rule.extensions = Array.from(
+				new Set([...rule.extensions, ...additions]),
+			);
+			renderTags();
+			refreshSummary();
+			this.saveSettings();
+		};
+		inputEl.addEventListener("keydown", (event) => {
+			if (event.key === "Enter") {
+				event.preventDefault();
+				addExtensions();
+			}
+		});
+		addEl.createEl("button", {
+			text: "Add",
+			attr: { type: "button" },
+		}).addEventListener("click", addExtensions);
 	}
 
 	private getUploadRuleSummary(rule: UploadRule) {
@@ -260,8 +404,8 @@ export class UploadRuleSettingRenderer {
 		}
 	}
 
-	saveAndRedisplay() {
+	saveAndRefresh(focusRule?: UploadRule) {
 		this.saveSettings();
-		this.redisplay();
+		this.refreshUploadRules(focusRule);
 	}
 }

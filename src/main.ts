@@ -29,11 +29,11 @@ import { getRenamePath } from "./ui/modals/renameModal";
 import { findUploadRule, isManagedUrl } from "./lib/uploadRules";
 
 export default class WebDavImageUploaderPlugin extends Plugin {
-	settings: WebDavImageUploaderSettings;
+	settings!: WebDavImageUploaderSettings;
 
-	client: WebDavClient;
+	client!: WebDavClient;
 
-	loader: WebDavImageLoader;
+	loader!: WebDavImageLoader;
 
 	async onload() {
 		await this.loadSettings();
