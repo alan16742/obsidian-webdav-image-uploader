@@ -21,6 +21,8 @@ export interface UploadTarget {
 	urlPrefix: string;
 	remotePath: string;
 	url: string;
+	linkType: "external" | "local";
+	linkTarget: string;
 }
 
 export const TEMPLATE_VARIABLE_NAMES = [
@@ -37,6 +39,7 @@ export const TEMPLATE_VARIABLE_NAMES = [
 
 const TEMPLATE_VARIABLE_PATTERN = /\{\{\s*(\w+)(?::([^}]+))?\s*\}\}/g;
 const URL_VARIABLE_AT_START_PATTERN = /^\s*\{\{\s*url\s*\}\}/i;
+const URL_VARIABLE_PATTERN = /\{\{\s*url\s*\}\}/i;
 
 export function createDefaultUploadRule(): UploadRule {
 	return {
@@ -167,8 +170,13 @@ export function validateUploadRule(
 		}
 	}
 
-	if (!URL_VARIABLE_AT_START_PATTERN.test(rule.linkFormat)) {
-		errors.push("Link format must start with {{url}}.");
+	if (rule.linkFormat.trim() === "") {
+		errors.push("Link format cannot be empty.");
+	} else if (
+		URL_VARIABLE_PATTERN.test(rule.linkFormat) &&
+		!URL_VARIABLE_AT_START_PATTERN.test(rule.linkFormat)
+	) {
+		errors.push("{{url}} must be at the start of the link format when used.");
 	}
 
 	const knownVariables = new Set<string>(TEMPLATE_VARIABLE_NAMES);
@@ -196,25 +204,59 @@ export function buildUploadTarget(
 	}
 
 	const urlPrefix = getEffectiveUrlPrefix(normalizedRule, webdavUrl);
-	const renderedUrl = formatTemplate(normalizedRule.linkFormat, {
+	const renderedTarget = formatTemplate(normalizedRule.linkFormat, {
 		...variables,
 		url: { type: "string", value: urlPrefix },
 	}).trim();
-	const remotePath = hasUrlPrefix(renderedUrl, urlPrefix)
-		? normalizeRemotePath(renderedUrl.substring(urlPrefix.length))
-		: null;
-	if (remotePath == null || remotePath === "/") {
+	const linkType = URL_VARIABLE_AT_START_PATTERN.test(normalizedRule.linkFormat)
+		? "external"
+		: "local";
+	let remotePath: string;
+	if (linkType === "external") {
+		if (!hasUrlPrefix(renderedTarget, urlPrefix)) {
+			throw new Error(
+				"Link format must produce a file path after the URL prefix.",
+			);
+		}
+		remotePath = normalizeRemotePath(renderedTarget.substring(urlPrefix.length));
+	} else {
+		remotePath = normalizeRemotePath(renderedTarget);
+	}
+	if (remotePath === "/") {
 		throw new Error(
-			"Link format must produce a file path after the URL prefix.",
+			linkType === "external"
+				? "Link format must produce a file path after the URL prefix."
+				: "Link format must produce a local file path.",
 		);
 	}
+	const url = buildManagedUrl(urlPrefix, remotePath);
 
 	return {
 		rule: normalizedRule,
 		urlPrefix,
 		remotePath,
-		url: buildManagedUrl(urlPrefix, remotePath),
+		url,
+		linkType,
+		linkTarget: linkType === "external"
+			? url
+			: remotePath.substring(1),
 	};
+}
+
+export function formatUploadLink(
+	target: Pick<UploadTarget, "linkType" | "linkTarget">,
+	fileName: string,
+	useMarkdownLinks: boolean,
+): string {
+	if (target.linkType === "local" && !useMarkdownLinks) {
+		return `[[${target.linkTarget}]]`;
+	}
+
+	const linkTarget = target.linkType === "local"
+		? encodeRemotePath(target.linkTarget).substring(1)
+		: target.linkTarget;
+	const linkText = fileName.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+	return `[${linkText}](${linkTarget})`;
 }
 
 export function resolveUploadTarget(

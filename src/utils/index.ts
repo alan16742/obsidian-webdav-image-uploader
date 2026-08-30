@@ -122,12 +122,6 @@ export function noticeError(message: string, ...args: unknown[]) {
 	new Notice(message, 5000);
 }
 
-export function getToken(username?: string, password?: string) {
-	const bytes = new TextEncoder().encode(`${username}:${password}`);
-	const binString = String.fromCharCode(...bytes);
-	return btoa(binString);
-}
-
 export function getCurrentEditor(app: App) {
 	return app.workspace.getActiveViewOfType(MarkdownView)?.editor;
 }

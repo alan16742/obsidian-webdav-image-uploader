@@ -28,7 +28,9 @@ export class ImageLink<T extends LinkData> extends AttachmentLink<T> {
 		return {
 			fileName: uploadInfo.fileName ?? "",
 			url: uploadInfo.url,
-			markdownLink: `![${uploadInfo.fileName}](${uploadInfo.url})`,
+			markdownLink: uploadInfo.markdownLink.startsWith("!")
+				? uploadInfo.markdownLink
+				: `!${uploadInfo.markdownLink}`,
 		};
 	}
 

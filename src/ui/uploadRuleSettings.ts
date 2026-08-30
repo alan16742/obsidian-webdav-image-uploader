@@ -241,7 +241,9 @@ export class UploadRuleSettingRenderer {
 		let formatInput: HTMLInputElement | null = null;
 		new Setting(contentEl)
 			.setName("Link format")
-			.setDesc("Must start with {{url}} and produce the complete public URL.")
+			.setDesc(
+				"Start with {{url}} for a standard Markdown URL link. Without it, the result is a local link target using Obsidian's link format setting.",
+			)
 			.addText((text) => {
 				formatInput = text.inputEl;
 				text
@@ -392,7 +394,7 @@ export class UploadRuleSettingRenderer {
 				this.plugin.settings.url,
 				variables,
 			);
-			return `${conditions.join(" · ")} → ${target.url}`;
+			return `${conditions.join(" · ")} → ${target.linkTarget}`;
 		} catch {
 			const hasUrl =
 				rule.urlPrefix.trim() !== "" ||

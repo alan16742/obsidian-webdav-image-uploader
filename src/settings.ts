@@ -66,7 +66,7 @@ export const DEFAULT_SETTINGS: WebDavImageUploaderSettings = {
 };
 
 export function sanitizeSettings(data: unknown): WebDavImageUploaderSettings {
-	const source = isRecord(data) ? data : {};
+	const source = isRecord(data) ? data : DEFAULT_SETTINGS;
 	const settings: WebDavImageUploaderSettings = {
 		...DEFAULT_SETTINGS,
 		uploadRules: sanitizeUploadRules(source),
@@ -186,10 +186,9 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Disable basic auth")
 			.setDesc(
-				"By default, the plugin will intercept image requests for WebDAV authentication. " +
-					"It may cause some rendering mistakes when scrolling up and down the content. " +
-					"If you don't need this feature, you can disable it. " +
-					"You may need to restart Obsidian for this setting to take effect."
+				"By default, protected WebDAV images, videos, and audio files are loaded through authenticated blob URLs. " +
+					"Disable this when your media URLs are already publicly accessible. " +
+					"Reopen the note to refresh existing previews."
 			)
 			.addToggle((toggle) =>
 				toggle

@@ -1,99 +1,10 @@
 import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
-import WebDavImageUploaderPlugin from "../main";
-import { getToken } from "../utils";
-import { WebDavImageUploaderSettings } from "../settings";
-import { extractRemotePath } from "./uploadRules";
-
-export class WebDavClient {
-	plugin: WebDavImageUploaderPlugin;
-	client!: WebDavClientInner;
-
-	constructor(plugin: WebDavImageUploaderPlugin) {
-		this.plugin = plugin;
-
-		this.initClient();
-	}
-
-	initClient() {
-		const settings = this.plugin.settings;
-		this.client = new WebDavClientInner(settings);
-	}
-
-	async downloadFile(url: string, sourcePath?: string) {
-		const path = this.getPath(url);
-		const fileName = path.split("/").pop()!;
-
-		const resp = await this.getFileContents(url);
-
-		const filePath =
-			await this.plugin.app.fileManager.getAvailablePathForAttachment(
-				fileName,
-				sourcePath,
-			);
-		return await this.plugin.app.vault.createBinary(filePath, resp);
-	}
-
-	async uploadFile(file: File, path: string, url: string): Promise<FileInfo> {
-		const buffer = await file.arrayBuffer();
-
-		const success = await this.client.putFileContents(path, buffer);
-
-		if (!success) {
-			throw new Error(`Failed to upload file: '${file.name}'`);
-		}
-
-		return { fileName: file.name, url };
-	}
-
-	async getFileContents(url: string) {
-		return await this.client.getFileContents(this.getPath(url));
-	}
-
-	async renameFile(oldPath: string, newPath: string) {
-		await this.client.moveFile(oldPath, newPath, false);
-	}
-
-	async testConnection() {
-		try {
-			const resp = await this.client.customRequest("/", {
-				method: "PROPFIND",
-				headers: { Depth: "0" },
-			});
-
-			// WebDAV servers may return 207 (Multi-Status) for a successful PROPFIND request
-			if (resp.status === 207) {
-				return null;
-			}
-
-			return `Check connection failed: ${resp.status}`;
-		} catch (e) {
-			return `${e}`;
-		}
-	}
-
-	async deleteFile(url: string) {
-		const path = this.getPath(url);
-		await this.client.deleteFile(path);
-	}
-
-	getPath(url: string) {
-		return extractRemotePath(
-			url,
-			this.plugin.settings.url,
-			this.plugin.settings.uploadRules,
-		);
-	}
-}
-
-export interface FileInfo {
-	fileName: string;
-	url: string;
-}
+import { WebDavImageUploaderSettings } from "../../settings";
 
 /**
  * refer to: https://github.com/perry-mitchell/webdav-client
  */
-class WebDavClientInner {
+export class WebDavClientInner {
 	private baseUrl: string;
 	private authHeader: string;
 
@@ -101,11 +12,17 @@ class WebDavClientInner {
 		const { url, username, password } = settings;
 		this.baseUrl = url.endsWith("/") ? url.slice(0, -1) : url;
 		if (username && password) {
-			const credentials = getToken(username, password);
+			const credentials = WebDavClientInner.getToken(username, password);
 			this.authHeader = `Basic ${credentials}`;
 		} else {
 			this.authHeader = "";
 		}
+	}
+
+    static getToken(username?: string, password?: string) {
+		const bytes = new TextEncoder().encode(`${username}:${password}`);
+		const binString = String.fromCharCode(...bytes);
+		return btoa(binString);
 	}
 
 	async putFileContents(
@@ -136,7 +53,7 @@ class WebDavClientInner {
 		return true;
 	}
 
-	async getFileContents(path: string) {
+	async getResource(path: string): Promise<WebDavResource> {
 		const encodedPath = this.encodePath(path);
 		const url = this.buildUrl(encodedPath);
 
@@ -147,7 +64,14 @@ class WebDavClientInner {
 
 		this.handleResponseCode(response);
 
-		return response.arrayBuffer;
+		return {
+			data: response.arrayBuffer,
+			contentType: this.getResponseHeader(response, "content-type"),
+		};
+	}
+
+	async getFileContents(path: string) {
+		return (await this.getResource(path)).data;
 	}
 
 	async moveFile(oldPath: string, newPath: string, overwrite = false) {
@@ -320,4 +244,22 @@ class WebDavClientInner {
 			);
 		}
 	}
+
+	private getResponseHeader(
+		response: RequestUrlResponse,
+		name: string,
+	): string | undefined {
+		const target = name.toLowerCase();
+		for (const [key, value] of Object.entries(response.headers)) {
+			if (key.toLowerCase() === target) {
+				return value;
+			}
+		}
+		return undefined;
+	}
+}
+
+export interface WebDavResource {
+	data: ArrayBuffer;
+	contentType?: string;
 }

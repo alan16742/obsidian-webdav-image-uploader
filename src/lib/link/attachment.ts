@@ -9,6 +9,7 @@ import {
 import {
 	buildManagedUrl,
 	findUploadRule,
+	formatUploadLink,
 	getManagedUrlPrefix,
 	resolveUploadTarget,
 } from "../uploadRules";
@@ -142,11 +143,26 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			target.remotePath,
 			target.url,
 		);
+		const vault = this.plugin.app.vault as typeof this.plugin.app.vault & {
+			getConfig?: (name: string) => unknown;
+		};
+		const useMarkdownLinks =
+			target.linkType === "external" ||
+			vault.getConfig?.("useMarkdownLinks") === true;
 
 		return {
 			fileName: file.name,
 			url: fileInfo.url,
-			markdownLink: `[${file.name}](${fileInfo.url})`,
+			markdownLink: formatUploadLink(
+				{
+					linkType: target.linkType,
+					linkTarget: target.linkType === "external"
+						? fileInfo.url
+						: target.linkTarget,
+				},
+				file.name,
+				useMarkdownLinks,
+			),
 		};
 	}
 
