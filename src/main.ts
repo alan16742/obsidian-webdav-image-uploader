@@ -9,7 +9,13 @@ import {
 	TFolder,
 } from "obsidian";
 import { WebDavClient } from "./lib/webdavClient";
-import { createWebDavImageExtension, WebDavImageLoader } from "./view/imageLoader";
+import {
+	createWebDavMediaExtension,
+	WebDavMediaLoader,
+} from "./view/mediaLoader";
+import { imageMediaAdapter } from "./view/imageLoader";
+import { videoMediaAdapter } from "./view/videoLoader";
+import { audioMediaAdapter } from "./view/audioLoader";
 import {
 	getCurrentEditor,
 	noticeError,
@@ -33,7 +39,7 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 
 	client!: WebDavClient;
 
-	loader!: WebDavImageLoader;
+	mediaLoader!: WebDavMediaLoader;
 
 	async onload() {
 		await this.loadSettings();
@@ -42,7 +48,11 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 
 		this.client = new WebDavClient(this);
 
-		this.loader = new WebDavImageLoader(this);
+		this.mediaLoader = new WebDavMediaLoader(this, [
+			imageMediaAdapter,
+			videoMediaAdapter,
+			audioMediaAdapter,
+		]);
 
 		this.addCommand({
 			id: "toggle-auto-upload",
@@ -97,14 +107,19 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 			}),
 		);
 
-		// add basic authentication header when loading webdav images
-		if (!this.settings.disableBasicAuth) {
-			this.registerEditorExtension(createWebDavImageExtension(this));
-		}
+		// Replace protected WebDAV media sources with authenticated blob URLs.
+		// The loader stays registered so settings changes apply to newly rendered
+		// media without patching the global fetch implementation.
+		this.registerEditorExtension(
+			createWebDavMediaExtension(this.mediaLoader),
+		);
+		this.registerMarkdownPostProcessor((el, context) => {
+			context.addChild(this.mediaLoader.mountMarkdown(el));
+		}, 0);
 	}
 
 	onunload() {
-		this.loader.destroy();
+		this.mediaLoader.destroy();
 	}
 
 	async loadSettings() {

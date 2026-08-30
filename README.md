@@ -8,7 +8,7 @@ This is an Obsidian (https://obsidian.md) plugin for managing local images by st
 
 ### Upload, Download, and Delete Files
 
-- When pasting or dragging images into a note, the plugin will intercept the action, select the first matching upload rule, upload the image to the corresponding WebDAV path, and insert the generated preview link (`![file](https://yourdomain.com/dav/path/to/file.jpg)`). You can enable/disable it in the plugin settings, or execute `WebDAV Image Uploader: Toggle auto upload` command.
+- When pasting or dragging images into a note, the plugin will intercept the action, select the first matching upload rule, upload the image to the corresponding WebDAV path, and insert the generated preview link (for example, `![file](https://yourdomain.com/dav/path/to/file.jpg)` or `![[file.jpg]]`). You can enable/disable it in the plugin settings, or execute `WebDAV Image Uploader: Toggle auto upload` command.
 - You can also right-click on a local image link (`![file](attachments/file.jpg)`) and select the `Upload file to WebDAV` option from the menu to upload the image and insert the link. You can configure whether to keep the local file after a successful upload.
 - When right-clicking a preview link, you can select `Download file from WebDAV` to download the image locally. The path is related to your Obsidian configuration (Settings -> Files & Links).
 - When right-clicking a preview link, you can select `Delete file from WebDAV` to delete the image from the WebDAV server and remove the link from the note.
@@ -43,23 +43,36 @@ More details about the new features can be found in the [Release Page](https://g
 
 Upload rules combine file filtering, public URL selection, and path formatting. Rules are checked from top to bottom, and the first rule whose configured filename prefix, filename suffix, and extensions all match is used. Empty prefix and suffix fields match any filename. Enabling **Any extension** makes the extension condition a wildcard. Files that do not match a rule are skipped.
 
-Each rule has a URL prefix and a link format. A blank URL prefix uses the main WebDAV URL. The link format must start with `{{url}}` and produces the complete link inserted into the note. For example:
+Each rule has a URL prefix and a link format. A blank URL prefix uses the main WebDAV URL. A link format that starts with `{{url}}` produces a standard Markdown URL link. For example:
 
 ```text
 URL prefix:  https://img.example.com
 Link format: {{url}}/images/{{nameext}}
-Result:      https://img.example.com/images/photo.jpg
+Inserted:    ![photo.jpg](https://img.example.com/images/photo.jpg)
 ```
+
+When the link format does not start with `{{url}}`, the rendered path is used as both the WebDAV file path and a local link target. The plugin follows Obsidian's **Use `[[Wikilinks]]`** setting when inserting the link:
+
+```text
+URL prefix:  https://img.example.com
+Link format: images/{{nameext}}
+Inserted:    ![[images/photo.jpg]]
+             or ![photo.jpg](images/photo.jpg)
+```
+
+For preview fallback, a missing local target is interpreted relative to the WebDAV root, not the note's folder. For example, `![](test/image.png)` maps to the WebDAV path `/test/image.png`; `./` and `../` segments are normalized first. If Obsidian can resolve the target to an existing local attachment, its native preview takes precedence and no WebDAV request is made.
 
 The public URL prefix must map paths one-to-one to the main WebDAV server. WebDAV upload, download, rename, and delete requests always use the main WebDAV URL; public URL prefixes are only used in note links.
 
 ## Others
 
-### About Image Preview
+### About Media Preview
 
-WebDAV may require [Http Authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Authentication) to verify permissions when accessing files. But Obsidian (CodeMirror) does not seem to provide an API to add request headers for requests sent by `![]()`. Therefore, this plugin manually fetching and displaying the images. This display behavior differs from Obsidian's default behavior and may result in loading failures (in rare cases), and it doesn't work in other cases (like reading mode or [image properties](https://help.obsidian.md/bases/views#Image+property)).
+WebDAV may require [HTTP Authentication](https://developer.mozilla.org/en-US/docs/Web/HTTP/Guides/Authentication) to verify permissions when accessing files. Obsidian does not provide an API to add authentication headers to media requests sent by `![]()`. In Live Preview and Reading view, this plugin downloads managed images, videos, and audio files through the configured WebDAV server and displays them with temporary blob URLs. Public URL prefixes are mapped back to the main WebDAV server before authentication, so WebDAV credentials are not sent to the public URL host.
 
-If you don't like this feature, you can disable it in the plugin settings (and restart Obsidian), then configure your server to allow image access (or simply disable authentication). For example, you can identify Obsidian's requests using the following headers:
+Remote audio and video links are rendered as native media controls even when Obsidian initially creates an image preview for them. If a local Markdown or Wikilink media embed cannot be found in the vault, the plugin also tries the same path on WebDAV when its filename matches an upload rule. Existing local attachments keep using Obsidian's native renderer.
+
+Blob-backed video and audio must be downloaded completely before playback and cannot use HTTP range streaming. For large media files, prefer public or signed media URLs and disable this feature in the plugin settings. You can configure your server to allow media access for Obsidian requests using the following headers:
 
 ```http
 
