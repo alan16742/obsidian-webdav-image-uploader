@@ -3,7 +3,7 @@ import {
 	PluginValue,
 	ViewPlugin,
 } from "@codemirror/view";
-import { MarkdownRenderChild } from "obsidian";
+import { MarkdownRenderChild, MarkdownView } from "obsidian";
 import type WebDavImageUploaderPlugin from "../main";
 import { WebDavBlobStore, type BlobHandle } from "../lib/webDavBlobStore";
 import {
@@ -12,6 +12,10 @@ import {
 	getEffectiveUrlPrefix,
 	getFileNameParts,
 } from "../lib/uploadRules";
+
+export { imageMediaAdapter } from "./imageLoader";
+export { videoMediaAdapter } from "./videoLoader";
+export { audioMediaAdapter } from "./audioLoader";
 
 export type MediaType = "image" | "video" | "audio";
 
@@ -55,11 +59,8 @@ export interface MediaAdapter {
 	selector: string;
 	matches(element: Element): boolean;
 	getSource(element: Element): string;
-	setLoading(element: Element): void;
 	setSource(element: Element, source: string): void;
 	restoreSource(element: Element, source: string): void;
-	setError(element: Element, error: unknown): void;
-	clearState(element: Element): void;
 }
 
 interface ElementBinding {
@@ -67,7 +68,6 @@ interface ElementBinding {
 	originalUrl: string;
 	displayedUrl: string;
 	handle?: BlobHandle;
-	phase: "loading" | "loaded" | "error";
 }
 
 class MediaDomBinding {
@@ -80,6 +80,7 @@ class MediaDomBinding {
 		container: HTMLElement,
 		private readonly loader: WebDavMediaLoader,
 		observe: boolean,
+		private readonly getSourcePath: () => string,
 	) {
 		if (observe) {
 			const MutationObserverClass =
@@ -184,12 +185,8 @@ class MediaDomBinding {
 			adapter,
 			originalUrl: currentUrl,
 			displayedUrl: currentUrl,
-			phase: "loading",
 		};
 		this.bindings.set(element, binding);
-
-		adapter.setLoading(element);
-		binding.displayedUrl = adapter.getSource(element);
 
 		try {
 			const handle = await this.loader.blobStore.acquire(currentUrl);
@@ -202,17 +199,12 @@ class MediaDomBinding {
 			}
 
 			binding.handle = handle;
-			binding.phase = "loaded";
 			binding.displayedUrl = handle.src;
 			adapter.setSource(element, handle.src);
 			binding.displayedUrl = adapter.getSource(element);
 		} catch (error) {
 			if (this.bindings.get(element) !== binding) return;
 
-			binding.phase = "error";
-			binding.displayedUrl = binding.originalUrl;
-			adapter.restoreSource(element, binding.originalUrl);
-			adapter.setError(element, error);
 			binding.displayedUrl = adapter.getSource(element);
 			console.error(
 				`Failed to load WebDAV media: '${binding.originalUrl}'`,
@@ -255,7 +247,10 @@ class MediaDomBinding {
 		const mediaType = getMediaType(sourcePath);
 		if (mediaType == null) return;
 
-		const sourceUrl = this.loader.resolveMissingAttachment(sourcePath);
+		const sourceUrl = this.loader.resolveMissingAttachment(
+			sourcePath,
+			this.getSourcePath(),
+		);
 		if (sourceUrl == null) return;
 
 		const originalChildren = Array.from(container.childNodes);
@@ -306,13 +301,11 @@ class MediaDomBinding {
 			return media;
 		}
 
-		wrapper?.classList.add("webdav-media-wrapper");
 		image.replaceWith(media);
 
 		this.transforms.set(media, () => {
 			if (media.parentNode == null) return;
 			media.replaceWith(image);
-			wrapper?.classList.remove("webdav-media-wrapper");
 		});
 		return media;
 	}
@@ -343,10 +336,9 @@ class MediaDomBinding {
 		binding: ElementBinding,
 		restoreSource: boolean,
 	) {
-		if (restoreSource && binding.phase !== "error") {
+		if (restoreSource) {
 			binding.adapter.restoreSource(element, binding.originalUrl);
 		}
-		binding.adapter.clearState(element);
 		binding.handle?.release();
 	}
 }
@@ -368,35 +360,62 @@ export class WebDavMediaLoader {
 		].join(",");
 	}
 
-	mount(container: HTMLElement, observe: boolean): () => void {
+	mount(
+		container: HTMLElement,
+		observe: boolean,
+		sourcePath: string | (() => string) = "",
+	): () => void {
 		if (this.destroyed) return () => undefined;
-		const mount = new MediaDomBinding(container, this, observe);
+		const getSourcePath = typeof sourcePath === "function"
+			? sourcePath
+			: () => sourcePath;
+		const mount = new MediaDomBinding(
+			container,
+			this,
+			observe,
+			getSourcePath,
+		);
 		this.mounts.add(mount);
 		return () => mount.dispose();
 	}
 
-	mountMarkdown(container: HTMLElement): MarkdownRenderChild {
-		return new WebDavMediaRenderChild(container, this);
+	mountMarkdown(
+		container: HTMLElement,
+		sourcePath: string,
+	): MarkdownRenderChild {
+		return new WebDavMediaRenderChild(container, this, sourcePath);
 	}
 
 	getAdapter(element: Element): MediaAdapter | undefined {
 		return this.adapters.find((adapter) => adapter.matches(element));
 	}
 
-	resolveMissingAttachment(sourcePath: string): string | undefined {
-		if (hasUrlScheme(sourcePath)) return;
+	resolveMissingAttachment(
+		linkPath: string,
+		sourcePath = "",
+	): string | undefined {
+		if (hasUrlScheme(linkPath)) return;
 
-		const rule = findUploadRule(this.plugin.settings.uploadRules, sourcePath);
+		const rule = findUploadRule(this.plugin.settings.uploadRules, linkPath);
 		if (rule == null) return;
 
 		const urlPrefix = getEffectiveUrlPrefix(
 			rule,
 			this.plugin.settings.url,
 		);
-		const remotePath = normalizeAttachmentPath(sourcePath);
+		const remotePath = normalizeAttachmentPath(linkPath, sourcePath);
 		if (urlPrefix === "" || remotePath === "/") return;
 
-		return buildManagedUrl(urlPrefix, remotePath) + getFragment(sourcePath);
+		return buildManagedUrl(urlPrefix, remotePath) + getFragment(linkPath);
+	}
+
+	getMarkdownSourcePath(container: HTMLElement): string {
+		const leaf = this.plugin.app.workspace
+			.getLeavesOfType("markdown")
+			.find(({ view }) => view.containerEl.contains(container));
+		return leaf?.view instanceof MarkdownView
+			? leaf.view.file?.path ?? ""
+			: this.plugin.app.workspace.getActiveFile()?.path ?? "";
 	}
 
 	shouldProxy(url: string): boolean {
@@ -430,6 +449,7 @@ class WebDavMediaRenderChild extends MarkdownRenderChild {
 	constructor(
 		containerEl: HTMLElement,
 		private readonly loader: WebDavMediaLoader,
+		private readonly sourcePath: string,
 	) {
 		super(containerEl);
 	}
@@ -441,7 +461,11 @@ class WebDavMediaRenderChild extends MarkdownRenderChild {
 		// resolution, matching Obsidian's section lifecycle.
 		this.mountTimer = window.setTimeout(() => {
 			this.mountTimer = undefined;
-			this.disposeMount = this.loader.mount(this.containerEl, true);
+			this.disposeMount = this.loader.mount(
+				this.containerEl,
+				true,
+				this.sourcePath,
+			);
 		}, 0);
 	}
 
@@ -459,7 +483,11 @@ class WebDavMediaLoaderExtension implements PluginValue {
 	private readonly disposeMount: () => void;
 
 	constructor(view: EditorView, loader: WebDavMediaLoader) {
-		this.disposeMount = loader.mount(view.dom, true);
+		this.disposeMount = loader.mount(
+			view.dom,
+			true,
+			() => loader.getMarkdownSourcePath(view.dom),
+		);
 	}
 
 	destroy() {
@@ -536,8 +564,6 @@ function setMediaEmbedClasses(
 	container.classList.add(
 		"media-embed",
 		`${mediaType}-embed`,
-		"webdav-media-embed",
-		`webdav-${mediaType}-embed`,
 	);
 }
 
@@ -545,12 +571,19 @@ function hasUrlScheme(source: string): boolean {
 	return /^[a-z][a-z\d+.-]*:/i.test(source.trim());
 }
 
-function normalizeAttachmentPath(source: string): string {
+function normalizeAttachmentPath(source: string, notePath: string): string {
 	const path = source
 		.split("#", 1)[0]
 		.split("?", 1)[0]
 		.replace(/\\/g, "/");
-	const segments: string[] = [];
+	const isExplicitlyRelative = /^\.{1,2}(?:\/|$)/.test(path);
+	const segments = isExplicitlyRelative
+		? notePath
+			.replace(/\\/g, "/")
+			.split("/")
+			.slice(0, -1)
+			.filter(Boolean)
+		: [];
 	for (const segment of path.split("/")) {
 		const decodedSegment = safeDecodeURIComponent(segment);
 		if (decodedSegment === "" || decodedSegment === ".") continue;

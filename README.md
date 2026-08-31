@@ -51,7 +51,7 @@ Link format: {{url}}/images/{{nameext}}
 Inserted:    ![photo.jpg](https://img.example.com/images/photo.jpg)
 ```
 
-When the link format does not start with `{{url}}`, the rendered path is used as both the WebDAV file path and a local link target. The plugin follows Obsidian's **Use `[[Wikilinks]]`** setting when inserting the link:
+When the link format does not start with `{{url}}`, it produces a local link target. A filename-only result such as `{{nameext}}` uses Obsidian's configured attachment folder for both the WebDAV file path and the inserted link. Markdown links are made relative to the note, while Wikilinks use the vault path. A result with an explicit directory, such as `images/{{nameext}}`, keeps that directory and overrides the attachment folder. The plugin follows Obsidian's **Use `[[Wikilinks]]`** setting when inserting the link:
 
 ```text
 URL prefix:  https://img.example.com
@@ -60,7 +60,7 @@ Inserted:    ![[images/photo.jpg]]
              or ![photo.jpg](images/photo.jpg)
 ```
 
-For preview fallback, a missing local target is interpreted relative to the WebDAV root, not the note's folder. For example, `![](test/image.png)` maps to the WebDAV path `/test/image.png`; `./` and `../` segments are normalized first. If Obsidian can resolve the target to an existing local attachment, its native preview takes precedence and no WebDAV request is made.
+For preview fallback, a missing local target without a leading `./` or `../` is interpreted relative to the WebDAV root. Explicitly relative targets are resolved from the note's folder, so a generated link such as `![](../../attachments/image.png)` still maps to the vault/WebDAV path `/attachments/image.png`. If Obsidian can resolve the target to an existing local attachment, its native preview takes precedence and no WebDAV request is made.
 
 The public URL prefix must map paths one-to-one to the main WebDAV server. WebDAV upload, download, rename, and delete requests always use the main WebDAV URL; public URL prefixes are only used in note links.
 

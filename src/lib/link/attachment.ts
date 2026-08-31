@@ -7,10 +7,14 @@ import {
 	LinkInfo,
 } from "../../utils";
 import {
+	applyLocalUploadPath,
 	buildManagedUrl,
 	findUploadRule,
 	formatUploadLink,
+	getFileNameParts,
+	getLocalLinkTarget,
 	getManagedUrlPrefix,
+	localTargetHasDirectory,
 	resolveUploadTarget,
 } from "../uploadRules";
 import { Link, LinkData } from "./types";
@@ -118,10 +122,12 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		}
 
 		let file;
+		let sourceFile: TFile | undefined;
 		if (this.data instanceof File) {
 			file = this.data;
 		} else {
 			const tFile = this.getTFile();
+			sourceFile = tFile;
 			const buffer = await this.plugin.app.vault.readBinary(tFile);
 			file = new File([buffer], tFile.name, {
 				lastModified: tFile.stat.mtime,
@@ -129,7 +135,7 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		}
 
 		const vars = getFormatVariables(file, note);
-		const target = resolveUploadTarget(
+		let target = resolveUploadTarget(
 			this.plugin.settings.uploadRules,
 			file.name,
 			this.plugin.settings.url,
@@ -138,6 +144,23 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		if (target == null) {
 			throw new Error(`No upload rule matched '${file.name}'.`);
 		}
+
+		let usesAttachmentPath = false;
+		if (
+			target.linkType === "local" &&
+			!localTargetHasDirectory(target.linkTarget)
+		) {
+			const renderedFileName =
+				getFileNameParts(target.linkTarget).nameext || file.name;
+			const attachmentPath = sourceFile?.path ??
+				await this.plugin.app.fileManager.getAvailablePathForAttachment(
+					renderedFileName,
+					note.path,
+				);
+			target = applyLocalUploadPath(target, attachmentPath);
+			usesAttachmentPath = true;
+		}
+
 		const fileInfo = await this.plugin.client.uploadFile(
 			file,
 			target.remotePath,
@@ -149,6 +172,15 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		const useMarkdownLinks =
 			target.linkType === "external" ||
 			vault.getConfig?.("useMarkdownLinks") === true;
+		const linkTarget = target.linkType === "external"
+			? fileInfo.url
+			: usesAttachmentPath
+				? getLocalLinkTarget(
+					target.linkTarget,
+					note.path,
+					useMarkdownLinks,
+				)
+				: target.linkTarget;
 
 		return {
 			fileName: file.name,
@@ -156,9 +188,7 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			markdownLink: formatUploadLink(
 				{
 					linkType: target.linkType,
-					linkTarget: target.linkType === "external"
-						? fileInfo.url
-						: target.linkTarget,
+					linkTarget,
 				},
 				file.name,
 				useMarkdownLinks,

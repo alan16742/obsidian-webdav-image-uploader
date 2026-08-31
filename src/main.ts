@@ -12,10 +12,10 @@ import { WebDavClient } from "./lib/webdavClient";
 import {
 	createWebDavMediaExtension,
 	WebDavMediaLoader,
+	imageMediaAdapter,
+	videoMediaAdapter,
+	audioMediaAdapter,
 } from "./view/mediaLoader";
-import { imageMediaAdapter } from "./view/imageLoader";
-import { videoMediaAdapter } from "./view/videoLoader";
-import { audioMediaAdapter } from "./view/audioLoader";
 import {
 	getCurrentEditor,
 	noticeError,
@@ -114,7 +114,9 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 			createWebDavMediaExtension(this.mediaLoader),
 		);
 		this.registerMarkdownPostProcessor((el, context) => {
-			context.addChild(this.mediaLoader.mountMarkdown(el));
+			context.addChild(
+				this.mediaLoader.mountMarkdown(el, context.sourcePath),
+			);
 		}, 0);
 	}
 

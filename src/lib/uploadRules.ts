@@ -259,6 +259,60 @@ export function formatUploadLink(
 	return `[${linkText}](${linkTarget})`;
 }
 
+export function localTargetHasDirectory(linkTarget: string): boolean {
+	return linkTarget
+		.trim()
+		.replace(/\\/g, "/")
+		.replace(/^\/+/, "")
+		.includes("/");
+}
+
+export function applyLocalUploadPath(
+	target: UploadTarget,
+	vaultPath: string,
+): UploadTarget {
+	if (target.linkType !== "local") return target;
+
+	const remotePath = normalizeRemotePath(vaultPath);
+	return {
+		...target,
+		remotePath,
+		url: buildManagedUrl(target.urlPrefix, remotePath),
+		linkTarget: remotePath.substring(1),
+	};
+}
+
+export function getLocalLinkTarget(
+	vaultPath: string,
+	sourcePath: string,
+	useMarkdownLinks: boolean,
+): string {
+	const targetSegments = normalizeVaultPathSegments(vaultPath);
+	const normalizedTarget = targetSegments.join("/");
+	if (!useMarkdownLinks) return normalizedTarget;
+
+	const sourceSegments = normalizeVaultPathSegments(sourcePath);
+	sourceSegments.pop();
+
+	let sharedSegments = 0;
+	while (
+		sharedSegments < sourceSegments.length &&
+		sharedSegments < targetSegments.length &&
+		sourceSegments[sharedSegments] === targetSegments[sharedSegments]
+	) {
+		sharedSegments++;
+	}
+
+	const relativePath = [
+		...sourceSegments.slice(sharedSegments).map(() => ".."),
+		...targetSegments.slice(sharedSegments),
+	].join("/");
+
+	return relativePath.startsWith("../")
+		? relativePath
+		: `./${relativePath}`;
+}
+
 export function resolveUploadTarget(
 	rules: UploadRule[],
 	filePath: string,
@@ -352,6 +406,19 @@ function hasUrlPrefix(url: string, prefix: string): boolean {
 function normalizeRemotePath(path: string): string {
 	const withoutLeadingSlashes = path.replace(/^\/+/, "");
 	return "/" + withoutLeadingSlashes.replace(/\/{2,}/g, "/");
+}
+
+function normalizeVaultPathSegments(path: string): string[] {
+	const segments: string[] = [];
+	for (const segment of path.replace(/\\/g, "/").split("/")) {
+		if (segment === "" || segment === ".") continue;
+		if (segment === "..") {
+			segments.pop();
+			continue;
+		}
+		segments.push(segment);
+	}
+	return segments;
 }
 
 function encodeRemotePath(path: string): string {

@@ -242,7 +242,7 @@ export class UploadRuleSettingRenderer {
 		new Setting(contentEl)
 			.setName("Link format")
 			.setDesc(
-				"Start with {{url}} for a standard Markdown URL link. Without it, the result is a local link target using Obsidian's link format setting.",
+				"Start with {{url}} for a standard Markdown URL link. Without it, the result is a local link target using Obsidian's link format setting. A filename-only target uses Obsidian's attachment folder; an explicit directory overrides it.",
 			)
 			.addText((text) => {
 				formatInput = text.inputEl;

@@ -2,31 +2,6 @@
 	width: 100%;
 }
 
-video.webdav-media-loading,
-audio.webdav-media-loading {
-	opacity: 0.65;
-}
-
-.webdav-media-embed > img,
-.webdav-media-embed > video,
-.webdav-media-wrapper > video {
-	max-width: 100%;
-}
-
-.webdav-media-embed > audio,
-.webdav-media-wrapper > audio {
-	width: 100%;
-}
-
-.webdav-audio-embed {
-	display: flex;
-	width: 100%;
-}
-
-.webdav-media-wrapper > .image-resize-corner {
-	display: none;
-}
-
 .webdav-upload-rules {
 	display: flex;
 	flex-direction: column;
