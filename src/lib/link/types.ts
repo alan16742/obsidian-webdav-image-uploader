@@ -19,7 +19,7 @@ export interface Link<T extends LinkData> {
 
 	rename(note: TFile, newPath: string): Promise<string>;
 
-    delete(note: TFile): Promise<void>;
+	delete(note: TFile): Promise<void>;
 }
 
 export type LinkData = LinkInfo | File;

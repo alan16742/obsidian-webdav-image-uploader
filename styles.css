@@ -2,6 +2,25 @@
 	width: 100%;
 }
 
+/*
+ * External embeds are inline CodeMirror widgets, unlike Obsidian's block-level
+ * local attachment widgets. Remove the inline line box around standalone
+ * media so its font metrics do not become a large visual gap after the
+ * media loads or an image placeholder is replaced by audio/video controls.
+ */
+.markdown-source-view.mod-cm6 .cm-line.webdav-standalone-media-line {
+	font-size: 0;
+	line-height: 0;
+}
+
+.markdown-source-view.mod-cm6
+	.cm-line.webdav-standalone-media-line
+	> .webdav-direct-media-embed {
+	font-size: var(--font-text-size);
+	line-height: var(--line-height-normal);
+	vertical-align: top;
+}
+
 .webdav-upload-rules {
 	display: flex;
 	flex-direction: column;

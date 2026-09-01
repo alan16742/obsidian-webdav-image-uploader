@@ -2,6 +2,12 @@ import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
 import { WebDavImageUploaderSettings } from "../../settings";
 
 /**
+ * Maximum number of "create parent directory, then retry" attempts. Bounds the
+ * recursion so a persistently failing server cannot cause an infinite loop.
+ */
+const MAX_RETRY_DEPTH = 3;
+
+/**
  * refer to: https://github.com/perry-mitchell/webdav-client
  */
 export class WebDavClientInner {
@@ -28,6 +34,7 @@ export class WebDavClientInner {
 	async putFileContents(
 		path: string,
 		data: ArrayBuffer | string,
+		depth = 0,
 	): Promise<boolean> {
 		const encodedPath = this.encodePath(path);
 		const url = this.buildUrl(encodedPath);
@@ -39,16 +46,17 @@ export class WebDavClientInner {
 			body: data,
 		});
 
-		// parent directory not exists
-		if (response.status === 409) {
+		// Parent directory does not exist. Create it and retry, but bound the
+		// retries so a persistently failing server can't cause an infinite loop.
+		if (response.status === 409 && depth < MAX_RETRY_DEPTH) {
 			await this.ensureDirectoryExists(
 				path.substring(0, path.lastIndexOf("/")),
 			);
 
-			return await this.putFileContents(path, data);
-		} else {
-			this.handleResponseCode(response);
+			return await this.putFileContents(path, data, depth + 1);
 		}
+
+		this.handleResponseCode(response);
 
 		return true;
 	}
@@ -74,7 +82,7 @@ export class WebDavClientInner {
 		return (await this.getResource(path)).data;
 	}
 
-	async moveFile(oldPath: string, newPath: string, overwrite = false) {
+	async moveFile(oldPath: string, newPath: string, overwrite = false, depth = 0) {
 		const url = this.buildUrl(this.encodePath(oldPath));
 
 		if (!overwrite) {
@@ -99,12 +107,16 @@ export class WebDavClientInner {
 			},
 		});
 
-		// parent directory not exists
-		if ([404, 409, 500].includes(response.status)) {
+		// Parent directory does not exist. Create it and retry, but bound the
+		// retries so a persistently failing server can't cause an infinite loop.
+		if (
+			[404, 409, 500].includes(response.status) &&
+			depth < MAX_RETRY_DEPTH
+		) {
 			await this.ensureDirectoryExists(
 				newPath.substring(0, newPath.lastIndexOf("/")),
 			);
-			await this.moveFile(oldPath, newPath, overwrite);
+			await this.moveFile(oldPath, newPath, overwrite, depth + 1);
 			return;
 		}
 

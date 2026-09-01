@@ -362,22 +362,24 @@ function getNotesByAttachments(attachments: TAbstractFile[], app: App) {
 		string,
 		{ note: TFile; attachments: Set<TAbstractFile> }
 	>();
+	const attachmentByPath = new Map(
+		attachments.map((attachment) => [attachment.path, attachment]),
+	);
 	const resolvedLinks = app.metadataCache.resolvedLinks;
 	for (const [notePath, links] of Object.entries(resolvedLinks)) {
-		for (const link in links) {
-			for (const attachment of attachments) {
-				if (link === attachment.path) {
-					let data = noteAttachmentsMap.get(notePath);
-					if (data == null) {
-						data = {
-							note: getFileByPath(app, notePath)!,
-							attachments: new Set(),
-						};
-						noteAttachmentsMap.set(notePath, data);
-					}
-					data.attachments.add(attachment);
-				}
+		for (const link of Object.keys(links)) {
+			const attachment = attachmentByPath.get(link);
+			if (attachment == null) continue;
+
+			let data = noteAttachmentsMap.get(notePath);
+			if (data == null) {
+				data = {
+					note: getFileByPath(app, notePath)!,
+					attachments: new Set(),
+				};
+				noteAttachmentsMap.set(notePath, data);
 			}
+			data.attachments.add(attachment);
 		}
 	}
 

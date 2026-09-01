@@ -74,35 +74,129 @@ export function getSelectedLink(editor: Editor) {
 
 // get all links in line
 export function matchLinks(content: string): LinkInfo[] {
-	// !?[$1]($2)|!?[[$3|$4]] - markdown or wikilink
-	const regex =
-		/(?:!?\[(.*?)\]\((.*?)\))|(?:!?\[\[([^|\]]+?)(?:\|(.*?))?\]\])/g;
-	const matches = content.matchAll(regex);
-	return (
-		Array.from(matches)
-			.map((match) => {
-				let name: string;
-				let path: string;
+	const links: LinkInfo[] = [];
 
-				if (match[3] != null) {
-					path = match[3];
-					name = match[4] ?? "";
-				} else {
-					name = match[1] ?? "";
-					path = match[2];
-				}
+	for (let i = 0; i < content.length; i++) {
+		if (content[i] !== "[") {
+			continue;
+		}
 
-				return {
-					start: match.index ?? 0,
-					end: (match.index ?? 0) + match[0].length,
-					raw: match[0],
-					name: name,
-					path: path,
-				};
-			})
-			// reverse the order as replacing links from back to front is more convenient
-			.reverse()
-	);
+		// The opening bracket may be prefixed with "!" for an embed (e.g.
+		// "![[file]]" or "![file](url)"). Include the "!" in the matched range so
+		// replacing the link preserves the embed marker.
+		const isEmbed = i > 0 && content[i - 1] === "!";
+		const start = isEmbed ? i - 1 : i;
+
+		const matched =
+			content[i + 1] === "["
+				? scanWikilink(content, i)
+				: scanMarkdownLink(content, i);
+		if (matched == null) {
+			continue;
+		}
+
+		links.push({
+			start,
+			end: matched.end,
+			raw: content.slice(start, matched.end),
+			name: matched.name,
+			path: matched.path,
+		});
+		i = matched.end - 1;
+	}
+
+	// Reverse so callers can replace links from back to front without
+	// invalidating the offsets of the remaining links.
+	return links.reverse();
+}
+
+// Matches "[[target]]" and "[[target|alias]]".
+function scanWikilink(
+	content: string,
+	openIndex: number,
+): { end: number; path: string; name: string } | null {
+	// Find the closing "]]", allowing an optional "|alias" before it.
+	let i = openIndex + 2;
+	let pathEnd = -1;
+	while (i < content.length) {
+		if (content[i] === "|") {
+			pathEnd = i;
+			break;
+		}
+		if (content[i] === "]" && content[i + 1] === "]") {
+			pathEnd = i;
+			break;
+		}
+		i++;
+	}
+	if (pathEnd === -1) {
+		return null;
+	}
+
+	const path = content.slice(openIndex + 2, pathEnd);
+	// A target can't be empty (mirrors the original `[^|\]]+`).
+	if (path === "") {
+		return null;
+	}
+
+	// No alias: "[[target]]".
+	if (content[pathEnd] === "]") {
+		return { end: pathEnd + 2, path, name: "" };
+	}
+
+	// Alias: "[[target|alias]]".
+	const aliasEnd = content.indexOf("]]", pathEnd + 1);
+	if (aliasEnd === -1) {
+		return null;
+	}
+	return {
+		end: aliasEnd + 2,
+		path,
+		name: content.slice(pathEnd + 1, aliasEnd),
+	};
+}
+
+// Matches "[text](url)". URLs may contain balanced parentheses (e.g.
+// Wikipedia-style links), which the previous regex truncated at the first ")".
+function scanMarkdownLink(
+	content: string,
+	openIndex: number,
+): { end: number; path: string; name: string } | null {
+	// Find the "]" that is immediately followed by "(" (the start of the URL).
+	let i = openIndex + 1;
+	while (
+		i < content.length &&
+		!(content[i] === "]" && content[i + 1] === "(")
+	) {
+		i++;
+	}
+	if (i >= content.length) {
+		return null;
+	}
+
+	const name = content.slice(openIndex + 1, i);
+
+	// Scan the URL, balancing parentheses so an inner ")" doesn't end the link
+	// early.
+	let depth = 1;
+	let j = i + 2;
+	while (j < content.length && depth > 0) {
+		if (content[j] === "(") {
+			depth++;
+		} else if (content[j] === ")") {
+			depth--;
+		}
+		j++;
+	}
+	if (depth !== 0) {
+		return null;
+	}
+
+	return {
+		end: j,
+		path: content.slice(i + 2, j - 1),
+		name,
+	};
 }
 
 export interface LinkInfo {

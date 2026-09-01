@@ -278,11 +278,15 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 	}
 
 	async onRightClickExplorer(menu: Menu, file: TAbstractFile) {
-		const modal = new ConfirmModal(this.app, {
-			title: "Warning",
-			content:
-				"The following operations may break your vault. Please make sure to back up your vault before proceeding, are you sure to continue?",
-		});
+		const confirm = (action: () => Promise<void>) => {
+			const modal = new ConfirmModal(this.app, {
+				title: "Warning",
+				content:
+					"The following operations may break your vault. Please make sure to back up your vault before proceeding, are you sure to continue?",
+			});
+			modal.onSubmit = action;
+			modal.open();
+		};
 
 		if (file instanceof TFile && file.extension === "md") {
 			menu.addItem((item) =>
@@ -290,12 +294,11 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 					.setTitle("Upload files in note to WebDAV")
 					.setIcon("arrow-up-from-line")
 					.onClick(() => {
-						modal.onSubmit = async () => {
+						confirm(async () => {
 							const uploader = new BatchUploader(this);
 							await uploader.uploadNoteFiles(file, true);
 							await uploader.createLog();
-						};
-						modal.open();
+						});
 					}),
 			);
 			menu.addItem((item) =>
@@ -303,12 +306,11 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 					.setTitle("Download files in note from WebDAV")
 					.setIcon("arrow-down-from-line")
 					.onClick(() => {
-						modal.onSubmit = async () => {
+						confirm(async () => {
 							const downloader = new BatchDownloader(this);
 							await downloader.downloadNoteFiles(file);
 							await downloader.createLog();
-						};
-						modal.open();
+						});
 					}),
 			);
 		}
@@ -319,12 +321,11 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 					.setTitle("Upload attachments to WebDAV")
 					.setIcon("arrow-up-from-line")
 					.onClick(() => {
-						modal.onSubmit = async () => {
+						confirm(async () => {
 							const uploader = new BatchUploader(this);
 							await uploader.uploadAttachments(file);
 							await uploader.createLog();
-						};
-						modal.open();
+						});
 					}),
 			);
 			menu.addItem((item) =>
@@ -332,12 +333,11 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 					.setTitle("Upload files in folder's notes to WebDAV")
 					.setIcon("arrow-up-from-line")
 					.onClick(() => {
-						modal.onSubmit = async () => {
+						confirm(async () => {
 							const uploader = new BatchUploader(this);
 							await uploader.uploadFolderFiles(file);
 							await uploader.createLog();
-						};
-						modal.open();
+						});
 					}),
 			);
 			menu.addItem((item) =>
@@ -345,12 +345,11 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 					.setTitle("Download files in folder's notes from WebDAV")
 					.setIcon("arrow-down-from-line")
 					.onClick(() => {
-						modal.onSubmit = async () => {
+						confirm(async () => {
 							const downloader = new BatchDownloader(this);
 							await downloader.downloadFolderFiles(file);
 							await downloader.createLog();
-						};
-						modal.open();
+						});
 					}),
 			);
 		}

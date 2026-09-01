@@ -102,23 +102,16 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 
 	async upload(note: TFile) {
 		if (!this.uploadable()) {
-			if (this.linkType === "local") {
-				const fileName =
-					this.data instanceof File ? this.data.name : this.data.path;
-				if (
-					findUploadRule(
-						this.plugin.settings.uploadRules,
-						fileName,
-					) == null
-				) {
-					throw new Error(`No upload rule matched '${fileName}'.`);
-				}
+			const fileName =
+				this.data instanceof File ? this.data.name : this.data.path;
+			if (
+				this.linkType === "local" &&
+				findUploadRule(this.plugin.settings.uploadRules, fileName) ==
+					null
+			) {
+				throw new Error(`No upload rule matched '${fileName}'.`);
 			}
-			throw new Error(
-				`Cannot upload '${
-					this.data instanceof File ? this.data.name : this.data.path
-				}'`,
-			);
+			throw new Error(`Cannot upload '${fileName}'`);
 		}
 
 		let file;
