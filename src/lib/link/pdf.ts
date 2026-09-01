@@ -19,10 +19,22 @@ const factory: LinkFactory = {
 };
 export default factory;
 
+/**
+ * A PDF link in "dummy PDF" mode.
+ *
+ * Obsidian cannot preview a remote PDF from a `![](url)` link, so after
+ * uploading a PDF this plugin leaves a tiny local `.pdf` whose *content* is
+ * just the remote URL (the PDF++ "external PDF files" feature). PdfLink
+ * detects that case by reading the local file: for such links the real target
+ * is the URL stored inside the file, not the file path.
+ *
+ * `isDummyPdf` is tri-state — `undefined` means "not inspected yet" — so
+ * uploadable()/downloadable() optimistically return true until init() has read
+ * the file and can decide.
+ */
 export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 	dummyFile: TFile | null = null;
 
-	// null if not initialized yet
 	isDummyPdf?: boolean;
 
 	constructor(plugin: WebDavImageUploaderPlugin, data: T) {
@@ -95,6 +107,9 @@ export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 			return;
 		}
 
+		// The local file is just a pointer: its content is the remote URL.
+		// Rewrite this link to external so later operations target the URL
+		// stored inside the dummy file instead of the dummy file itself.
 		this.linkType = "external";
 		this.data.path = content;
 		this.isDummyPdf = true;

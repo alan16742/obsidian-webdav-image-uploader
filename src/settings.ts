@@ -187,8 +187,8 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 			.setName("Disable basic auth")
 			.setDesc(
 				"By default, protected WebDAV images, videos, and audio files are loaded through authenticated blob URLs. " +
-					"Disable this when your media URLs are already publicly accessible. " +
-					"Reopen the note to refresh existing previews."
+				"Disable this when your media URLs are already publicly accessible. " +
+				"Reopen the note to refresh existing previews."
 			)
 			.addToggle((toggle) =>
 				toggle

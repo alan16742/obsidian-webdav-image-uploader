@@ -5,7 +5,7 @@ export class EditorMediaLayout {
 	private readonly measuredElements = new WeakSet<Element>();
 	private readonly markedEmbeds = new Set<HTMLElement>();
 
-	constructor(private readonly requestEditorMeasure?: () => void) {}
+	constructor(private readonly requestEditorMeasure?: () => void) { }
 
 	mark(element: Element): boolean {
 		const embed = element.closest<HTMLElement>(

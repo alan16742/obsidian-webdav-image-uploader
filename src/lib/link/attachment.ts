@@ -107,7 +107,7 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			if (
 				this.linkType === "local" &&
 				findUploadRule(this.plugin.settings.uploadRules, fileName) ==
-					null
+				null
 			) {
 				throw new Error(`No upload rule matched '${fileName}'.`);
 			}
@@ -162,6 +162,8 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		const vault = this.plugin.app.vault as typeof this.plugin.app.vault & {
 			getConfig?: (name: string) => unknown;
 		};
+		// Obsidian has no public API for the "Use [[Wikilinks]]" toggle, so read
+		// it from the vault's internal config; a missing key means "off".
 		const useMarkdownLinks =
 			target.linkType === "external" ||
 			vault.getConfig?.("useMarkdownLinks") === true;

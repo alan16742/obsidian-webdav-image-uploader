@@ -25,7 +25,7 @@ export class WebDavClientInner {
 		}
 	}
 
-    static getToken(username?: string, password?: string) {
+	static getToken(username?: string, password?: string) {
 		const bytes = new TextEncoder().encode(`${username}:${password}`);
 		const binString = String.fromCharCode(...bytes);
 		return btoa(binString);
@@ -109,6 +109,8 @@ export class WebDavClientInner {
 
 		// Parent directory does not exist. Create it and retry, but bound the
 		// retries so a persistently failing server can't cause an infinite loop.
+		// Note: 404 can also mean the *source* is missing, but a missing parent
+		// is the common case, so we still attempt creation here.
 		if (
 			[404, 409, 500].includes(response.status) &&
 			depth < MAX_RETRY_DEPTH
@@ -175,6 +177,8 @@ export class WebDavClientInner {
 	}
 
 	async ensureDirectoryExists(path: string) {
+		// WebDAV MKCOL cannot create nested paths in one request, so walk the
+		// hierarchy one segment at a time; 405/409 mean it already exists.
 		const directories = path.split("/").filter((dir) => dir !== "");
 		let currentPath = "";
 

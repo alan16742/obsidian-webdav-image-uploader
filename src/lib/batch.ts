@@ -97,8 +97,7 @@ export class BatchUploader {
 		const total = noteAttachmentsMap.size;
 		for (const { note, attachments } of noteAttachmentsMap.values()) {
 			notice.setMessage(
-				`Uploading attachments in '${
-					note.path
+				`Uploading attachments in '${note.path
 				}'\n${count++}/${total}...`,
 			);
 
@@ -439,9 +438,8 @@ export async function createBatchLog(
 					: result.status === "skipped"
 						? "⏭️"
 						: "❌";
-			content += `| ${statusIcon} | ${
-				result.link.path
-			} | ${result.newLink ?? ""} | ${result.message ?? ""} |\n`;
+			content += `| ${statusIcon} | ${result.link.path
+				} | ${result.newLink ?? ""} | ${result.message ?? ""} |\n`;
 		}
 	}
 

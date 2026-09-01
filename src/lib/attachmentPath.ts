@@ -10,6 +10,9 @@ export function normalizeAttachmentPath(
 		.split("#", 1)[0]
 		.split("?", 1)[0]
 		.replace(/\\/g, "/");
+	// A link with an explicit `./` or `../` resolves against the note's folder;
+	// a bare path resolves against the WebDAV root so it maps onto the uploaded
+	// remote path unchanged.
 	const isExplicitlyRelative = /^\.{1,2}(?:\/|$)/.test(path);
 	const segments = isExplicitlyRelative
 		? notePath
@@ -40,7 +43,7 @@ export function getFragment(source: string): string {
 	return fragmentIndex === -1 ? "" : source.substring(fragmentIndex);
 }
 
-function safeDecodeURIComponent(value: string): string {
+export function safeDecodeURIComponent(value: string): string {
 	try {
 		return decodeURIComponent(value);
 	} catch {

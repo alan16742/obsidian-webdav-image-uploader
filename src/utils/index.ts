@@ -7,6 +7,7 @@ import {
 } from "obsidian";
 export { getFileType } from "../lib/fileTypes";
 export type { FileType } from "../lib/fileTypes";
+import { safeDecodeURIComponent } from "../lib/attachmentPath";
 
 export interface NoteInfo {
 	basename: string;
@@ -59,7 +60,7 @@ export function replaceLink(
 }
 
 export function getFileByPath(app: App, path: string) {
-	path = decodeURI(path);
+	path = safeDecodeURIComponent(path);
 	// https://forum.obsidian.md/t/how-to-get-full-paths-from-link-text
 	return app.metadataCache.getFirstLinkpathDest(path, "");
 }

@@ -1,6 +1,9 @@
 import type { WebDavClient } from "./webdavClient";
 import { getFragment, stripFragment } from "./attachmentPath";
 
+// Grace period before revoking an unreferenced blob URL. CodeMirror
+// virtualization removes and re-adds embeds while scrolling; the delay lets a
+// re-added embed reuse the existing blob instead of re-downloading the file.
 const REVOKE_DELAY_MS = 30_000;
 
 interface BlobEntry {
@@ -24,7 +27,7 @@ export class WebDavBlobStore {
 	private readonly entries = new Map<string, BlobEntry>();
 	private destroyed = false;
 
-	constructor(private readonly client: WebDavClient) {}
+	constructor(private readonly client: WebDavClient) { }
 
 	async acquire(sourceUrl: string): Promise<BlobHandle> {
 		if (this.destroyed) {

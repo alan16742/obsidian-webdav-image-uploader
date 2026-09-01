@@ -141,8 +141,7 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 		this.settings.enableUpload = !this.settings.enableUpload;
 		await this.saveSettings();
 		new Notice(
-			`Auto upload is ${
-				this.settings.enableUpload ? "enabled" : "disabled"
+			`Auto upload is ${this.settings.enableUpload ? "enabled" : "disabled"
 			}.`,
 		);
 	}
@@ -182,9 +181,9 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 		const isBatch = files.length > 1;
 		const notice = isBatch
 			? new Notice(
-					`Uploading ${files.length} files... (0/${files.length})`,
-					0,
-				)
+				`Uploading ${files.length} files... (0/${files.length})`,
+				0,
+			)
 			: new Notice(`Uploading file: '${files[0].name}'...`, 0);
 
 		const markdownLinks: string[] = [];
