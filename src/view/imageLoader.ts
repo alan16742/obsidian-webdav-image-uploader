@@ -1,4 +1,4 @@
-import type { MediaAdapter } from "./mediaTypes";
+import type { MediaAdapter } from "./mediaLoader";
 
 export const imageMediaAdapter: MediaAdapter = {
 	selector: "img[src]",

@@ -1,4 +1,5 @@
 import type { WebDavClient } from "./webdavClient";
+import { getFragment, stripFragment } from "./attachmentPath";
 
 const REVOKE_DELAY_MS = 30_000;
 
@@ -152,16 +153,6 @@ export class WebDavBlobStore {
 		window.clearTimeout(entry.revokeTimer);
 		entry.revokeTimer = undefined;
 	}
-}
-
-function stripFragment(url: string): string {
-	const index = url.indexOf("#");
-	return index === -1 ? url : url.substring(0, index);
-}
-
-function getFragment(url: string): string {
-	const index = url.indexOf("#");
-	return index === -1 ? "" : url.substring(index);
 }
 
 function normalizeMimeType(contentType?: string): string | undefined {

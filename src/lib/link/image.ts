@@ -2,7 +2,7 @@ import WebDavImageUploaderPlugin from "../../main";
 import { AttachmentLink } from "./attachment";
 import { TFile } from "obsidian";
 import { LinkData, LinkFactory } from "./types";
-import { FileType } from "../../utils";
+import type { FileType } from "../fileTypes";
 
 const factory: LinkFactory = {
 	create<T extends LinkData>(

@@ -1,16 +1,13 @@
 import { type BlobHandle, WebDavBlobStore } from "../lib/webDavBlobStore";
+import { getMediaType, type MediaType } from "../lib/fileTypes";
 import { getFileNameParts } from "../lib/uploadRules";
 import { EditorMediaLayout } from "./editorMediaLayout";
+import type { MediaAdapter } from "./mediaLoader";
 import {
 	copyMediaPresentation,
 	createMediaElement,
 	setMediaEmbedClasses,
 } from "./mediaElements";
-import {
-	getMediaType,
-	type MediaAdapter,
-	type MediaType,
-} from "./mediaTypes";
 
 export const MISSING_ATTACHMENT_SELECTOR =
 	".internal-embed.mod-empty-attachment[src]";

@@ -20,14 +20,21 @@ import {
 	getFragment,
 	hasUrlScheme,
 	normalizeAttachmentPath,
-} from "./mediaPath";
-import type { MediaAdapter } from "./mediaTypes";
+} from "../lib/attachmentPath";
 
 export { imageMediaAdapter } from "./imageLoader";
 export { videoMediaAdapter } from "./videoLoader";
 export { audioMediaAdapter } from "./audioLoader";
-export { getMediaType } from "./mediaTypes";
-export type { MediaAdapter, MediaType } from "./mediaTypes";
+export { getMediaType } from "../lib/fileTypes";
+export type { MediaType } from "../lib/fileTypes";
+
+export interface MediaAdapter {
+	selector: string;
+	matches(element: Element): boolean;
+	getSource(element: Element): string;
+	setSource(element: Element, source: string): void;
+	restoreSource(element: Element, source: string): void;
+}
 
 export class WebDavMediaLoader implements MediaDomLoader {
 	readonly blobStore: WebDavBlobStore;

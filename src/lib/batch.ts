@@ -2,12 +2,12 @@ import { App, Notice, TAbstractFile, TFile, TFolder, moment } from "obsidian";
 import {
 	getFileByPath,
 	LinkInfo,
-	getFileType,
 	isLocalPath,
 	matchLinks,
 	noticeError,
 } from "../utils";
 import WebDavImageUploaderPlugin from "../main";
+import { getFileType } from "./fileTypes";
 import { createLink, UploadFileInfo } from "./link";
 
 export class BatchUploader {

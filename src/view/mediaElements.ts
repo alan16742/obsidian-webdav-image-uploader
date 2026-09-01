@@ -1,4 +1,4 @@
-import type { MediaType } from "./mediaTypes";
+import type { MediaType } from "../lib/fileTypes";
 
 export function createMediaElement(
 	document: Document,

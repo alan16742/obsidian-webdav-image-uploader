@@ -5,6 +5,8 @@ import {
 	Notice,
 	moment,
 } from "obsidian";
+export { getFileType } from "../lib/fileTypes";
+export type { FileType } from "../lib/fileTypes";
 
 export interface NoteInfo {
 	basename: string;
@@ -219,37 +221,3 @@ export function noticeError(message: string, ...args: unknown[]) {
 export function getCurrentEditor(app: App) {
 	return app.workspace.getActiveViewOfType(MarkdownView)?.editor;
 }
-
-export function getFileType(fileName: string) {
-	const index = fileName.lastIndexOf(".");
-	if (index === -1) {
-		return "attachment";
-	}
-
-	const fileExtension = fileName.substring(index + 1).toLowerCase();
-	if (fileExtension === "md") {
-		return "md";
-	}
-
-	if (fileExtension === "pdf") {
-		return "pdf";
-	}
-
-	const imageExtensions = [
-		"jpg",
-		"jpeg",
-		"png",
-		"gif",
-		"svg",
-		"webp",
-		"bmp",
-		"ico",
-	];
-	if (imageExtensions.includes(fileExtension)) {
-		return "image";
-	}
-
-	return "attachment";
-}
-
-export type FileType = ReturnType<typeof getFileType>;

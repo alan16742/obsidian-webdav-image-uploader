@@ -1,4 +1,5 @@
-import { FileType, LinkInfo } from "../../utils";
+import type { FileType } from "../fileTypes";
+import { LinkInfo } from "../../utils";
 import { TFile } from "obsidian";
 import WebDavImageUploaderPlugin from "../../main";
 

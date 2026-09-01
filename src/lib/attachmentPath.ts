@@ -30,6 +30,11 @@ export function normalizeAttachmentPath(
 	return "/" + segments.join("/");
 }
 
+export function stripFragment(source: string): string {
+	const fragmentIndex = source.indexOf("#");
+	return fragmentIndex === -1 ? source : source.substring(0, fragmentIndex);
+}
+
 export function getFragment(source: string): string {
 	const fragmentIndex = source.indexOf("#");
 	return fragmentIndex === -1 ? "" : source.substring(fragmentIndex);
