@@ -7,16 +7,19 @@ import {
 	LinkInfo,
 } from "../../utils";
 import {
-	applyLocalUploadPath,
 	buildManagedUrl,
 	findUploadRule,
 	formatUploadLink,
-	getFileNameParts,
 	getLocalLinkTarget,
 	getManagedUrlPrefix,
-	localTargetHasDirectory,
+	normalizeRemotePath,
 	resolveUploadTarget,
 } from "../uploadRules";
+import {
+	getAttachmentFolderPath,
+	getNewLinkFormat,
+	getUseMarkdownLinks,
+} from "../obsidianPaths";
 import { Link, LinkData } from "./types";
 
 export class AttachmentLink<T extends LinkData> implements Link<T> {
@@ -115,20 +118,23 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		}
 
 		let file;
-		let sourceFile: TFile | undefined;
 		if (this.data instanceof File) {
 			file = this.data;
 		} else {
 			const tFile = this.getTFile();
-			sourceFile = tFile;
 			const buffer = await this.plugin.app.vault.readBinary(tFile);
 			file = new File([buffer], tFile.name, {
 				lastModified: tFile.stat.mtime,
 			});
 		}
 
-		const vars = getFormatVariables(file, note);
-		let target = resolveUploadTarget(
+		const attachmentFolder = await getAttachmentFolderPath(
+			this.plugin.app,
+			note.path,
+			file.name,
+		);
+		const vars = getFormatVariables(file, note, attachmentFolder);
+		const target = resolveUploadTarget(
 			this.plugin.settings.uploadRules,
 			file.name,
 			this.plugin.settings.url,
@@ -138,57 +144,39 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			throw new Error(`No upload rule matched '${file.name}'.`);
 		}
 
-		let usesAttachmentPath = false;
-		if (
-			target.linkType === "local" &&
-			!localTargetHasDirectory(target.linkTarget)
-		) {
-			const renderedFileName =
-				getFileNameParts(target.linkTarget).nameext || file.name;
-			const attachmentPath = sourceFile?.path ??
-				await this.plugin.app.fileManager.getAvailablePathForAttachment(
-					renderedFileName,
-					note.path,
-				);
-			target = applyLocalUploadPath(target, attachmentPath);
-			usesAttachmentPath = true;
-		}
-
 		const fileInfo = await this.plugin.client.uploadFile(
 			file,
 			target.remotePath,
 			target.url,
 		);
-		const vault = this.plugin.app.vault as typeof this.plugin.app.vault & {
-			getConfig?: (name: string) => unknown;
-		};
-		// Obsidian has no public API for the "Use [[Wikilinks]]" toggle, so read
-		// it from the vault's internal config; a missing key means "off".
-		const useMarkdownLinks =
-			target.linkType === "external" ||
-			vault.getConfig?.("useMarkdownLinks") === true;
-		const linkTarget = target.linkType === "external"
-			? fileInfo.url
-			: usesAttachmentPath
-				? getLocalLinkTarget(
-					target.linkTarget,
-					note.path,
-					useMarkdownLinks,
-				)
-				: target.linkTarget;
 
 		return {
 			fileName: file.name,
 			url: fileInfo.url,
-			markdownLink: formatUploadLink(
-				{
-					linkType: target.linkType,
-					linkTarget,
-				},
-				file.name,
-				useMarkdownLinks,
-			),
+			markdownLink: target.linkType === "external"
+				? formatUploadLink(
+					{
+						linkType: "external",
+						linkTarget: fileInfo.url,
+					},
+					file.name,
+					true,
+				)
+				: this.formatLocalLink(note, target.linkTarget, file.name),
 		};
+	}
+
+	formatLocalLink(note: TFile, vaultPath: string, fileName: string): string {
+		const linkTarget = getLocalLinkTarget(
+			vaultPath,
+			note.path,
+			getNewLinkFormat(this.plugin.app),
+		);
+		return formatUploadLink(
+			{ linkType: "local", linkTarget },
+			fileName,
+			getUseMarkdownLinks(this.plugin.app),
+		);
 	}
 
 	async download(note: TFile) {
@@ -198,12 +186,12 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 
 		this.tFile = await this.plugin.client.downloadFile(
 			(this.data as LinkInfo).path,
-			note.path,
 		);
 
-		const markdownLink = this.plugin.app.fileManager.generateMarkdownLink(
-			this.tFile,
+		const markdownLink = this.formatLocalLink(
+			note,
 			this.tFile.path,
+			this.tFile.name,
 		);
 
 		return {
@@ -228,9 +216,10 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			throw new Error(`No upload rule recognizes '${oldUrl}'.`);
 		}
 
-		await this.plugin.client.renameFile(oldPath, newPath);
+		const normalizedNewPath = normalizeRemotePath(newPath);
+		await this.plugin.client.renameFile(oldPath, normalizedNewPath);
 
-		return buildManagedUrl(urlPrefix, newPath);
+		return buildManagedUrl(urlPrefix, normalizedNewPath);
 	}
 
 	async delete(_note: TFile) {

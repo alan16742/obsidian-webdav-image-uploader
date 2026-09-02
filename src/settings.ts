@@ -314,6 +314,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 		const variableList = variablesEl.createEl("ul");
 		const descriptions: Record<string, string> = {
 			url: "the rule URL prefix, or the main WebDAV URL when blank",
+			attachment: "Obsidian's configured attachment folder for the current note",
 			name: "file basename",
 			ext: "file extension without the dot",
 			nameext: "file name with extension",

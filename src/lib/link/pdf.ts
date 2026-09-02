@@ -3,6 +3,10 @@ import WebDavImageUploaderPlugin from "../../main";
 import { AttachmentLink } from "./attachment";
 import { LinkData, LinkFactory } from "./types";
 import type { FileType } from "../fileTypes";
+import {
+	ensureVaultParentFolder,
+	getAvailableVaultPath,
+} from "../obsidianPaths";
 
 const factory: LinkFactory = {
 	create<T extends LinkData>(
@@ -134,17 +138,12 @@ export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 
 		// create dummy pdf file after uploaded
 		// see: https://ryotaushio.github.io/obsidian-pdf-plus/external-pdf-files.html
-		const filePath =
-			await this.plugin.app.fileManager.getAvailablePathForAttachment(
-				fileInfo.fileName,
-				note.path,
-			);
+		const remotePath = this.plugin.client.getPath(fileInfo.url);
+		const filePath = getAvailableVaultPath(this.plugin.app, remotePath);
+		await ensureVaultParentFolder(this.plugin.app, filePath);
 		const file = await this.plugin.app.vault.create(filePath, fileInfo.url);
 
-		let link = this.plugin.app.fileManager.generateMarkdownLink(
-			file,
-			filePath,
-		);
+		let link = this.formatLocalLink(note, file.path, file.name);
 
 		if (link[0] !== "!") {
 			link = "!" + link;

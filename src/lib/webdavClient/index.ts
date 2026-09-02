@@ -1,6 +1,10 @@
 import WebDavImageUploaderPlugin from "../../main";
 import { extractRemotePath } from "../uploadRules";
 import {
+	ensureVaultParentFolder,
+	getAvailableVaultPath,
+} from "../obsidianPaths";
+import {
 	WebDavClientInner,
 	type WebDavResource,
 } from "./webdavClientInner";
@@ -21,17 +25,13 @@ export class WebDavClient {
 		this.client = new WebDavClientInner(settings);
 	}
 
-	async downloadFile(url: string, sourcePath?: string) {
+	async downloadFile(url: string) {
 		const path = this.getPath(url);
-		const fileName = path.split("/").pop()!;
 
 		const resp = await this.getFileContents(url);
 
-		const filePath =
-			await this.plugin.app.fileManager.getAvailablePathForAttachment(
-				fileName,
-				sourcePath,
-			);
+		const filePath = getAvailableVaultPath(this.plugin.app, path);
+		await ensureVaultParentFolder(this.plugin.app, filePath);
 		return await this.plugin.app.vault.createBinary(filePath, resp);
 	}
 

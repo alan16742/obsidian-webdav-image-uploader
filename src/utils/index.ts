@@ -17,7 +17,11 @@ export interface NoteInfo {
 	};
 }
 
-export function getFormatVariables(file: File, note: NoteInfo) {
+export function getFormatVariables(
+	file: File,
+	note: NoteInfo,
+	attachmentFolder = "",
+) {
 	const dotIndex = file.name.lastIndexOf(".");
 	const fileName = dotIndex > 0 ? file.name.substring(0, dotIndex) : file.name;
 	const fileExtension =
@@ -25,6 +29,7 @@ export function getFormatVariables(file: File, note: NoteInfo) {
 			? file.name.substring(dotIndex + 1)
 			: "";
 	return {
+		attachment: { type: "string" as const, value: attachmentFolder },
 		name: { type: "string" as const, value: fileName },
 		ext: { type: "string" as const, value: fileExtension },
 		nameext: { type: "string" as const, value: file.name },

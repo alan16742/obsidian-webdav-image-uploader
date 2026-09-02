@@ -3,11 +3,16 @@ import type WebDavImageUploaderPlugin from "../main";
 import { getFormatVariables } from "../utils";
 import {
 	buildUploadTarget,
+	getLocalLinkTarget,
 	normalizeExtension,
 	normalizeUploadRule,
 	TEMPLATE_VARIABLE_NAMES,
 	UploadRule,
 } from "../lib/uploadRules";
+import {
+	getAttachmentFolderPath,
+	getNewLinkFormat,
+} from "../lib/obsidianPaths";
 
 interface UploadRuleCard {
 	cardEl: HTMLDetailsElement;
@@ -101,8 +106,15 @@ export class UploadRuleSettingRenderer {
 		contentEl.className = "webdav-upload-rule-content";
 		cardEl.appendChild(contentEl);
 
+		let summaryRevision = 0;
 		const refreshSummary = () => {
-			previewEl.textContent = this.getUploadRuleSummary(rule);
+			const revision = ++summaryRevision;
+			previewEl.textContent = "Resolving preview…";
+			void this.getUploadRuleSummary(rule).then((summary) => {
+				if (revision === summaryRevision) {
+					previewEl.textContent = summary;
+				}
+			});
 		};
 		refreshSummary();
 
@@ -242,7 +254,7 @@ export class UploadRuleSettingRenderer {
 		new Setting(contentEl)
 			.setName("Link format")
 			.setDesc(
-				"Start with {{url}} for a standard Markdown URL link. Without it, the result is a local link target using Obsidian's link format setting. A filename-only target uses Obsidian's attachment folder; an explicit directory overrides it.",
+				"Start with {{url}} for a standard Markdown URL link. Without it, the result is a local link target using Obsidian's link format setting. Use {{attachment}} for Obsidian's configured attachment folder.",
 			)
 			.addText((text) => {
 				formatInput = text.inputEl;
@@ -370,7 +382,7 @@ export class UploadRuleSettingRenderer {
 		}).addEventListener("click", addExtensions);
 	}
 
-	private getUploadRuleSummary(rule: UploadRule) {
+	private async getUploadRuleSummary(rule: UploadRule): Promise<string> {
 		const conditions: string[] = [];
 		conditions.push(
 			rule.extensions.length === 0
@@ -382,19 +394,35 @@ export class UploadRuleSettingRenderer {
 			const extension = rule.extensions[0] ?? "ext";
 			const exampleName = `${rule.prefix}file${rule.suffix}.${extension}`;
 			const now = Date.now();
+			const activeFile = this.app.workspace.getActiveFile();
+			const note = activeFile ?? {
+				basename: "test-note",
+				stat: { ctime: now, mtime: now },
+			};
+			const sourcePath = activeFile?.path ?? "";
+			const attachmentFolder = await getAttachmentFolderPath(
+				this.app,
+				sourcePath,
+				exampleName,
+			);
 			const variables = getFormatVariables(
 				new File([""], exampleName, { lastModified: now }),
-				this.app.workspace.getActiveFile() ?? {
-					basename: "test-note",
-					stat: { ctime: now, mtime: now },
-				},
+				note,
+				attachmentFolder,
 			);
 			const target = buildUploadTarget(
 				rule,
 				this.plugin.settings.url,
 				variables,
 			);
-			return `${conditions.join(" · ")} → ${target.linkTarget}`;
+			const previewTarget = target.linkType === "local"
+				? getLocalLinkTarget(
+					target.linkTarget,
+					sourcePath,
+					getNewLinkFormat(this.app),
+				)
+				: target.linkTarget;
+			return `${conditions.join(" · ")} → ${previewTarget}`;
 		} catch {
 			const hasUrl =
 				rule.urlPrefix.trim() !== "" ||

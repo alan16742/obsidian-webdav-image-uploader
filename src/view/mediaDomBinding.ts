@@ -19,7 +19,7 @@ export interface MediaDomLoader {
 	resolveMissingAttachment(
 		linkPath: string,
 		sourcePath?: string,
-	): string | undefined;
+	): Promise<string | undefined>;
 	shouldProxy(url: string): boolean;
 }
 
@@ -33,6 +33,10 @@ interface ElementBinding {
 export class MediaDomBinding {
 	private readonly bindings = new Map<Element, ElementBinding>();
 	private readonly transforms = new Map<Element, () => void>();
+	private readonly missingPreparations = new WeakMap<
+		HTMLElement,
+		Promise<Element | undefined>
+	>();
 	private readonly editorLayout: EditorMediaLayout;
 	private readonly observer?: MutationObserver;
 	private disposed = false;
@@ -131,8 +135,9 @@ export class MediaDomBinding {
 	private async processElement(element: Element) {
 		if (this.disposed) return;
 
-		const preparedElement = this.prepareElement(element);
+		const preparedElement = await this.prepareElement(element);
 		if (preparedElement == null) return;
+		if (this.disposed) return;
 		element = preparedElement;
 
 		const adapter = this.loader.getAdapter(element);
@@ -185,9 +190,11 @@ export class MediaDomBinding {
 		}
 	}
 
-	private prepareElement(element: Element): Element | undefined {
+	private async prepareElement(element: Element): Promise<Element | undefined> {
 		if (element.matches(MISSING_ATTACHMENT_SELECTOR)) {
-			return this.prepareMissingAttachment(element as HTMLElement);
+			return await this.prepareMissingAttachmentOnce(
+				element as HTMLElement,
+			);
 		}
 
 		const adapter = this.loader.getAdapter(element);
@@ -210,20 +217,40 @@ export class MediaDomBinding {
 		);
 	}
 
-	private prepareMissingAttachment(
+	private async prepareMissingAttachmentOnce(
 		container: HTMLElement,
-	): Element | undefined {
+	): Promise<Element | undefined> {
+		const existing = this.missingPreparations.get(container);
+		if (existing != null) return await existing;
+
+		const preparation = this.prepareMissingAttachment(container);
+		this.missingPreparations.set(container, preparation);
+		try {
+			return await preparation;
+		} finally {
+			if (this.missingPreparations.get(container) === preparation) {
+				this.missingPreparations.delete(container);
+			}
+		}
+	}
+
+	private async prepareMissingAttachment(
+		container: HTMLElement,
+	): Promise<Element | undefined> {
 		const sourcePath = container.getAttribute("src")?.trim();
 		if (sourcePath == null || sourcePath === "") return;
 
 		const mediaType = getMediaType(sourcePath);
 		if (mediaType == null) return;
 
-		const sourceUrl = this.loader.resolveMissingAttachment(
+		const sourceUrl = await this.loader.resolveMissingAttachment(
 			sourcePath,
 			this.getSourcePath(),
 		);
 		if (sourceUrl == null) return;
+		if (this.disposed || !container.matches(MISSING_ATTACHMENT_SELECTOR)) {
+			return;
+		}
 
 		const originalChildren = Array.from(container.childNodes);
 		const originalClassName = container.className;

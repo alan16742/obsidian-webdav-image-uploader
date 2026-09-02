@@ -1,4 +1,8 @@
-import { safeDecodeURIComponent } from "./attachmentPath";
+import {
+	normalizeVaultPath,
+	safeDecodeURIComponent,
+} from "./attachmentPath";
+import type { NewLinkFormat } from "./obsidianPaths";
 
 export interface UploadRule {
 	prefix: string;
@@ -29,6 +33,7 @@ export interface UploadTarget {
 
 export const TEMPLATE_VARIABLE_NAMES = [
 	"url",
+	"attachment",
 	"name",
 	"ext",
 	"nameext",
@@ -255,45 +260,29 @@ export function formatUploadLink(
 	}
 
 	const linkTarget = target.linkType === "local"
-		? encodeRemotePath(target.linkTarget).substring(1)
+		? encodeLocalLinkPath(target.linkTarget)
 		: target.linkTarget;
 	const linkText = fileName.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
 	return `[${linkText}](${linkTarget})`;
 }
 
-export function localTargetHasDirectory(linkTarget: string): boolean {
-	return linkTarget
-		.trim()
-		.replace(/\\/g, "/")
-		.replace(/^\/+/, "")
-		.includes("/");
-}
-
-export function applyLocalUploadPath(
-	target: UploadTarget,
-	vaultPath: string,
-): UploadTarget {
-	if (target.linkType !== "local") return target;
-
-	const remotePath = normalizeRemotePath(vaultPath);
-	return {
-		...target,
-		remotePath,
-		url: buildManagedUrl(target.urlPrefix, remotePath),
-		linkTarget: remotePath.substring(1),
-	};
-}
-
 export function getLocalLinkTarget(
 	vaultPath: string,
 	sourcePath: string,
-	useMarkdownLinks: boolean,
+	newLinkFormat: NewLinkFormat,
 ): string {
-	const targetSegments = normalizeVaultPathSegments(vaultPath);
-	const normalizedTarget = targetSegments.join("/");
-	if (!useMarkdownLinks) return normalizedTarget;
+	const normalizedTarget = normalizeVaultPath(vaultPath);
+	if (newLinkFormat === "absolute") {
+		return "/" + normalizedTarget;
+	}
+	if (newLinkFormat === "shortest") {
+		return normalizedTarget.substring(normalizedTarget.lastIndexOf("/") + 1);
+	}
 
-	const sourceSegments = normalizeVaultPathSegments(sourcePath);
+	const targetSegments = normalizedTarget.split("/").filter(Boolean);
+	const sourceSegments = normalizeVaultPath(sourcePath)
+		.split("/")
+		.filter(Boolean);
 	sourceSegments.pop();
 
 	let sharedSegments = 0;
@@ -313,6 +302,39 @@ export function getLocalLinkTarget(
 	return relativePath.startsWith("../")
 		? relativePath
 		: `./${relativePath}`;
+}
+
+/**
+ * Recover the canonical remote path represented by a shortest filename-only
+ * link. The final filename is already present in the note, so only the rule's
+ * directory template needs to be expanded.
+ */
+export function resolveBareUploadPath(
+	rule: UploadRule,
+	fileName: string,
+	attachmentFolder: string,
+): string | null {
+	const normalizedRule = normalizeUploadRule(rule);
+	if (URL_VARIABLE_AT_START_PATTERN.test(normalizedRule.linkFormat)) {
+		return null;
+	}
+
+	const format = normalizedRule.linkFormat.replace(/\\/g, "/");
+	const slashIndex = format.lastIndexOf("/");
+	if (slashIndex === -1) {
+		return fileName;
+	}
+
+	const { name, extension, nameext } = getFileNameParts(fileName);
+	const directory = formatTemplate(format.substring(0, slashIndex), {
+		attachment: { type: "string", value: attachmentFolder },
+		name: { type: "string", value: name },
+		ext: { type: "string", value: extension },
+		nameext: { type: "string", value: nameext },
+	});
+	if (/\{\{[^}]+\}\}/.test(directory)) return null;
+
+	return [directory, fileName].filter(Boolean).join("/");
 }
 
 export function resolveUploadTarget(
@@ -412,22 +434,8 @@ function hasUrlPrefix(url: string, prefix: string): boolean {
 	);
 }
 
-function normalizeRemotePath(path: string): string {
-	const withoutLeadingSlashes = path.replace(/^\/+/, "");
-	return "/" + withoutLeadingSlashes.replace(/\/{2,}/g, "/");
-}
-
-function normalizeVaultPathSegments(path: string): string[] {
-	const segments: string[] = [];
-	for (const segment of path.replace(/\\/g, "/").split("/")) {
-		if (segment === "" || segment === ".") continue;
-		if (segment === "..") {
-			segments.pop();
-			continue;
-		}
-		segments.push(segment);
-	}
-	return segments;
+export function normalizeRemotePath(path: string): string {
+	return "/" + normalizeVaultPath(path);
 }
 
 function encodeRemotePath(path: string): string {
@@ -436,6 +444,20 @@ function encodeRemotePath(path: string): string {
 	return normalizeRemotePath(path)
 		.split("/")
 		.map((segment) => encodeURIComponent(safeDecodeURIComponent(segment)))
+		.join("/");
+}
+
+function encodeLocalLinkPath(path: string): string {
+	// Preserve local path syntax (`/`, `./`, and `../`) while encoding each
+	// actual filename segment for Markdown links.
+	return path
+		.replace(/\\/g, "/")
+		.split("/")
+		.map((segment) =>
+			segment === "" || segment === "." || segment === ".."
+				? segment
+				: encodeURIComponent(safeDecodeURIComponent(segment)),
+		)
 		.join("/");
 }
 

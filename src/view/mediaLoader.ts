@@ -9,7 +9,9 @@ import { WebDavBlobStore } from "../lib/webDavBlobStore";
 import {
 	buildManagedUrl,
 	findUploadRule,
+	getFileNameParts,
 	getEffectiveUrlPrefix,
+	resolveBareUploadPath,
 } from "../lib/uploadRules";
 import {
 	MediaDomBinding,
@@ -19,8 +21,10 @@ import {
 import {
 	getFragment,
 	hasUrlScheme,
+	isBareAttachmentPath,
 	normalizeAttachmentPath,
 } from "../lib/attachmentPath";
+import { getAttachmentFolderPath } from "../lib/obsidianPaths";
 
 export { imageMediaAdapter } from "./imageLoader";
 export { videoMediaAdapter } from "./videoLoader";
@@ -88,10 +92,10 @@ export class WebDavMediaLoader implements MediaDomLoader {
 		return this.adapters.find((adapter) => adapter.matches(element));
 	}
 
-	resolveMissingAttachment(
+	async resolveMissingAttachment(
 		linkPath: string,
 		sourcePath = "",
-	): string | undefined {
+	): Promise<string | undefined> {
 		if (hasUrlScheme(linkPath)) return;
 
 		const rule = findUploadRule(this.plugin.settings.uploadRules, linkPath);
@@ -101,7 +105,22 @@ export class WebDavMediaLoader implements MediaDomLoader {
 			rule,
 			this.plugin.settings.url,
 		);
-		const remotePath = normalizeAttachmentPath(linkPath, sourcePath);
+		let resolvedLinkPath = linkPath;
+		if (isBareAttachmentPath(linkPath)) {
+			const fileName = getFileNameParts(linkPath).nameext;
+			const attachmentFolder = await getAttachmentFolderPath(
+				this.plugin.app,
+				sourcePath,
+				fileName,
+			);
+			resolvedLinkPath = resolveBareUploadPath(
+				rule,
+				fileName,
+				attachmentFolder,
+			) ?? "";
+		}
+		if (resolvedLinkPath === "") return;
+		const remotePath = normalizeAttachmentPath(resolvedLinkPath, sourcePath);
 		if (urlPrefix === "" || remotePath === "/") return;
 
 		return buildManagedUrl(urlPrefix, remotePath) + getFragment(linkPath);
