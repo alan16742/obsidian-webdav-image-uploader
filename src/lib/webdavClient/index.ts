@@ -38,31 +38,17 @@ export class WebDavClient {
 		return await this.plugin.app.vault.createBinary(filePath, resp);
 	}
 
-	async uploadFile(file: File, path: string, urlPrefix: string, localSourcePath?: string): Promise<FileInfo> {
+	async uploadFile(file: File, path: string, urlPrefix: string): Promise<FileInfo> {
 		const buffer = await file.arrayBuffer();
-		const slash = path.lastIndexOf("/");
-		const directory = path.slice(0, slash + 1);
-		const name = path.slice(slash + 1);
-		const dot = name.lastIndexOf(".");
-		const extension = dot > 0 ? name.slice(dot) : "";
-		const candidates = [path, directory + Math.trunc(file.lastModified) + extension];
-		for (let index = 0; index < 3; index++) {
-			if (index === 2) {
-				const digest = await crypto.subtle.digest("SHA-256", buffer);
-				const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
-				candidates.push(directory + hash + extension);
-			}
-			const candidate = candidates[index];
-			if (candidates.indexOf(candidate) !== index) continue;
-			if (localSourcePath != null) {
-				const local = this.plugin.app.vault.getAbstractFileByPath(candidate.substring(1));
-				if (local != null && local.path !== localSourcePath) continue;
-			}
-			if (await this.client.exists(candidate)) continue;
-			if (!await this.client.putFileContents(candidate, buffer)) continue;
-			return { fileName: file.name, remotePath: candidate, url: buildManagedUrl(urlPrefix, candidate) };
+
+		// Try the configured remote path exactly once. putFileContents uses
+		// If-None-Match so an existing remote file is never overwritten; callers
+		// can then retain/save the local file instead of inventing another path.
+		if (!await this.client.putFileContents(path, buffer)) {
+			throw new TransferSkippedError(`Remote file already exists: '${path}'. Local file retained.`);
 		}
-		throw new TransferSkippedError("All upload names already exist (original, mtime and SHA-256): '" + path + "'. Local file retained.");
+
+		return { fileName: file.name, remotePath: path, url: buildManagedUrl(urlPrefix, path) };
 	}
 
 	async getFileContents(url: string) {

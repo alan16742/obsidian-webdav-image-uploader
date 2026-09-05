@@ -8,7 +8,7 @@ import type WebDavImageUploaderPlugin from "../../main";
 import { WebDavBlobStore } from "../../lib/webdavClient/webdavBlobStore";
 import {
 	buildManagedUrl,
-	findPreviewRule,
+	findUploadRule,
 	getFileNameParts,
 	getEffectiveUrlPrefix,
 	resolveBareUploadPath,
@@ -99,7 +99,7 @@ export class WebDavMediaLoader implements MediaDomLoader {
 	): Promise<string | undefined> {
 		if (hasUrlScheme(linkPath)) return;
 
-		const rule = findPreviewRule(this.plugin.settings.uploadRules, linkPath);
+		const rule = findUploadRule(this.plugin.settings.uploadRules, linkPath);
 		if (rule == null) return;
 
 		const urlPrefix = getEffectiveUrlPrefix(

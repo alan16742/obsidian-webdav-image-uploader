@@ -112,7 +112,7 @@ export class WebDavClientInner {
 		// Parent directory does not exist. Create it and retry, but bound the
 		// retries so a persistently failing server can't cause an infinite loop.
 		if (
-			response.status === 409 &&
+			[404, 409, 500].includes(response.status) &&
 			depth < MAX_RETRY_DEPTH
 		) {
 			await this.ensureDirectoryExists(
@@ -178,19 +178,17 @@ export class WebDavClientInner {
 
 	async ensureDirectoryExists(path: string) {
 		// WebDAV MKCOL cannot create nested paths in one request, so walk the
-		// hierarchy one segment at a time. Verify existence after a 405 response;
-		// a 409 is an actual parent conflict and must not be silently ignored.
+		// hierarchy one segment at a time. Implementations commonly return 405 or
+		// 409 when a collection already exists. Treat both as idempotent and avoid
+		// a follow-up HEAD probe, which is not supported reliably by all bridges.
 		const directories = path.split("/").filter((dir) => dir !== "");
 		let currentPath = "";
 
 		for (const dir of directories) {
 			currentPath += "/" + dir;
 			const response = await this.createDirectory(currentPath);
-			if (response.status === 405 && await this.exists(currentPath)) {
-				continue;
-			} else {
-				this.handleResponseCode(response);
-			}
+			if ([405, 409].includes(response.status)) continue;
+			this.handleResponseCode(response);
 		}
 	}
 
@@ -252,7 +250,9 @@ export class WebDavClientInner {
 	}
 
 	private handleResponseCode(response: RequestUrlResponse) {
-		if (response.status < 200 || response.status >= 300 || response.status === 207) {
+		// Preserve the historical contract: requestUrl may already have handled
+		// redirects, and 207 Multi-Status is valid for WebDAV servers.
+		if (response.status >= 400) {
 			throw new Error(
 				`${response.status} ${response.text ?? "Unknown error"}`,
 			);

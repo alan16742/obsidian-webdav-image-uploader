@@ -41,8 +41,7 @@ export class TransferSession {
 		]);
 		const existing = key == null ? undefined : this.uploads.get(key);
 		if (existing != null) return existing;
-		const upload = this.client.uploadFile(file, target.remotePath, target.urlPrefix,
-			target.linkType === "local" ? source?.path ?? "" : undefined);
+		const upload = this.client.uploadFile(file, target.remotePath, target.urlPrefix);
 		if (key != null) {
 			this.uploads.set(key, upload);
 			void upload.catch(() => this.uploads.delete(key));

@@ -134,15 +134,6 @@ export function findUploadRule(
 	return rules.find((rule) => matchesUploadRule(rule, filePath, isLink)) ?? null;
 }
 
-/** Collision names no longer contain the original rule's filename prefix/suffix. */
-export function findPreviewRule(rules: UploadRule[], path: string): UploadRule | null {
-	const matched = findUploadRule(rules, path);
-	if (matched != null) return matched;
-	const { name, extension } = getFileNameParts(path);
-	if (!/^(?:\d+|[a-f0-9]{64})$/.test(name)) return null;
-	return rules.find(rule => rule.extensions.length === 0 || rule.extensions.includes(extension)) ?? null;
-}
-
 export function formatTemplate(
 	template: string,
 	variables: TemplateVariables,
@@ -286,8 +277,11 @@ export function getLocalLinkTarget(
 		return "/" + normalizedTarget;
 	}
 	if (newLinkFormat === "shortest") {
-		// Remote-only files have no local index that can disambiguate a basename.
-		return normalizedTarget;
+		// Intentional feature: Obsidian's "shortest" link format is basename-only.
+		// Do not change this to the full remote path just because the file is not
+		// currently in the vault. Missing remote attachments reconstruct their
+		// directory from the upload rule in WebDavMediaLoader.
+		return normalizedTarget.substring(normalizedTarget.lastIndexOf("/") + 1);
 	}
 
 	const targetSegments = normalizedTarget.split("/").filter(Boolean);
