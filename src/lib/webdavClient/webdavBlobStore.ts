@@ -1,5 +1,5 @@
-import type { WebDavClient } from "./webdavClient";
-import { getFragment, stripFragment } from "./attachmentPath";
+import type { WebDavClient } from ".";
+import { getFragment, stripFragment } from "../attachment/attachmentPaths";
 
 // Grace period before revoking an unreferenced blob URL. CodeMirror
 // virtualization removes and re-adds embeds while scrolling; the delay lets a

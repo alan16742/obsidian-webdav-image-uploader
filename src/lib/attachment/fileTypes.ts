@@ -43,8 +43,8 @@ export type FileType = KnownFileType | "attachment";
 
 const MEDIA_TYPE_SET: ReadonlySet<string> = new Set(MEDIA_TYPES);
 
-export function getFileType(source: string): FileType {
-	const { extension } = getFileNameParts(source);
+export function getFileType(source: string, isLink = true): FileType {
+	const { extension } = getFileNameParts(source, isLink);
 	return (Object.keys(FILE_TYPE_EXTENSIONS) as KnownFileType[]).find(
 		(fileType) => FILE_TYPE_EXTENSIONS[fileType].has(extension),
 	) ?? "attachment";

@@ -1,23 +1,24 @@
+import { reportTask } from "./utils";
 import {
-	App,
 	debounce,
-	Debouncer,
 	Notice,
 	PluginSettingTab,
 	Setting,
+	type App,
+	type Debouncer,
 } from "obsidian";
-import WebDavImageUploaderPlugin from "./main";
+import type WebDavImageUploaderPlugin from "./main";
 import { BatchUploader, BatchDownloader } from "./lib/batch";
 import {
 	isRecord,
 	createDefaultUploadRule,
 	sanitizeUploadRules,
 	TEMPLATE_VARIABLE_NAMES,
-	UploadRule,
-} from "./lib/uploadRules";
-import { UploadRuleSettingRenderer } from "./ui/uploadRuleSettings";
+	type UploadRule,
+} from "./lib/attachment/uploadRules";
+import { UploadRuleSettingRenderer } from "./view/settings/uploadRuleSettings";
 
-export type { UploadRule } from "./lib/uploadRules";
+export type { UploadRule } from "./lib/attachment/uploadRules";
 
 export interface WebDavImageUploaderSettings {
 	// Basic
@@ -114,7 +115,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 
 		this.saveSettings = debounce(
-			this.plugin.saveSettings.bind(this.plugin),
+			() => reportTask(() => this.plugin.saveSettings()),
 			200
 		);
 		this.uploadRuleSettingRenderer = new UploadRuleSettingRenderer(
@@ -384,9 +385,11 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					.setButtonText("Upload")
 					.setDisabled(true)
 					.onClick(async () => {
-						const uploader = new BatchUploader(this.plugin);
-						await uploader.uploadVaultFiles();
-						await uploader.createLog();
+						await reportTask(async () => {
+							const uploader = new BatchUploader(this.plugin);
+							await uploader.uploadVaultFiles();
+							await uploader.createLog();
+						});
 					})
 			);
 
@@ -398,9 +401,11 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					.setButtonText("Download")
 					.setDisabled(true)
 					.onClick(async () => {
-						const downloader = new BatchDownloader(this.plugin);
-						await downloader.downloadVaultFiles();
-						await downloader.createLog();
+						await reportTask(async () => {
+							const downloader = new BatchDownloader(this.plugin);
+							await downloader.downloadVaultFiles();
+							await downloader.createLog();
+						});
 					})
 			);
 	}

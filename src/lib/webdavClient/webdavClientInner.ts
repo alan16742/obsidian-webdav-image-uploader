@@ -1,5 +1,5 @@
-import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
-import { WebDavImageUploaderSettings } from "../../settings";
+import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from "obsidian";
+import type { WebDavImageUploaderSettings } from "../../settings";
 
 /**
  * Maximum number of "create parent directory, then retry" attempts. Bounds the
@@ -42,9 +42,11 @@ export class WebDavClientInner {
 		const response = await this.request({
 			url,
 			method: "PUT",
-			headers: { "Content-Type": "application/octet-stream" },
+			headers: { "Content-Type": "application/octet-stream", "If-None-Match": "*" },
 			body: data,
 		});
+
+		if (response.status === 412) return false;
 
 		// Parent directory does not exist. Create it and retry, but bound the
 		// retries so a persistently failing server can't cause an infinite loop.
@@ -109,10 +111,8 @@ export class WebDavClientInner {
 
 		// Parent directory does not exist. Create it and retry, but bound the
 		// retries so a persistently failing server can't cause an infinite loop.
-		// Note: 404 can also mean the *source* is missing, but a missing parent
-		// is the common case, so we still attempt creation here.
 		if (
-			[404, 409, 500].includes(response.status) &&
+			response.status === 409 &&
 			depth < MAX_RETRY_DEPTH
 		) {
 			await this.ensureDirectoryExists(
@@ -163,7 +163,7 @@ export class WebDavClientInner {
 			method: "HEAD",
 		});
 
-		if (response.status === 200) {
+		if (response.status >= 200 && response.status < 300) {
 			return true;
 		}
 
@@ -178,18 +178,16 @@ export class WebDavClientInner {
 
 	async ensureDirectoryExists(path: string) {
 		// WebDAV MKCOL cannot create nested paths in one request, so walk the
-		// hierarchy one segment at a time; 405/409 mean it already exists.
+		// hierarchy one segment at a time. Verify existence after a 405 response;
+		// a 409 is an actual parent conflict and must not be silently ignored.
 		const directories = path.split("/").filter((dir) => dir !== "");
 		let currentPath = "";
 
 		for (const dir of directories) {
 			currentPath += "/" + dir;
 			const response = await this.createDirectory(currentPath);
-			if ([405, 409].includes(response.status)) {
-				// most webdav servers return 405/409 if the directory already exists
-				console.warn(
-					`Directory already exists or cannot be created: ${currentPath}`,
-				);
+			if (response.status === 405 && await this.exists(currentPath)) {
+				continue;
 			} else {
 				this.handleResponseCode(response);
 			}
@@ -254,7 +252,7 @@ export class WebDavClientInner {
 	}
 
 	private handleResponseCode(response: RequestUrlResponse) {
-		if (response.status >= 400) {
+		if (response.status < 200 || response.status >= 300 || response.status === 207) {
 			throw new Error(
 				`${response.status} ${response.text ?? "Unknown error"}`,
 			);

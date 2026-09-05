@@ -1,18 +1,19 @@
 import {
-	EditorView,
-	PluginValue,
 	ViewPlugin,
+	type EditorView,
+	type PluginValue,
 } from "@codemirror/view";
 import { MarkdownRenderChild, MarkdownView } from "obsidian";
-import type WebDavImageUploaderPlugin from "../main";
-import { WebDavBlobStore } from "../lib/webDavBlobStore";
+import type WebDavImageUploaderPlugin from "../../main";
+import { WebDavBlobStore } from "../../lib/webdavClient/webdavBlobStore";
 import {
 	buildManagedUrl,
-	findUploadRule,
+	findPreviewRule,
 	getFileNameParts,
 	getEffectiveUrlPrefix,
 	resolveBareUploadPath,
-} from "../lib/uploadRules";
+	normalizeRemotePath,
+} from "../../lib/attachment/uploadRules";
 import {
 	MediaDomBinding,
 	type MediaDomLoader,
@@ -23,14 +24,14 @@ import {
 	hasUrlScheme,
 	isBareAttachmentPath,
 	normalizeAttachmentPath,
-} from "../lib/attachmentPath";
-import { getAttachmentFolderPath } from "../lib/obsidianPaths";
+} from "../../lib/attachment/attachmentPaths";
+import { getAttachmentFolderPath } from "../../lib/attachment/obsidianPaths";
 
 export { imageMediaAdapter } from "./imageLoader";
 export { videoMediaAdapter } from "./videoLoader";
 export { audioMediaAdapter } from "./audioLoader";
-export { getMediaType } from "../lib/fileTypes";
-export type { MediaType } from "../lib/fileTypes";
+export { getMediaType } from "../../lib/attachment/fileTypes";
+export type { MediaType } from "../../lib/attachment/fileTypes";
 
 export interface MediaAdapter {
 	selector: string;
@@ -98,7 +99,7 @@ export class WebDavMediaLoader implements MediaDomLoader {
 	): Promise<string | undefined> {
 		if (hasUrlScheme(linkPath)) return;
 
-		const rule = findUploadRule(this.plugin.settings.uploadRules, linkPath);
+		const rule = findPreviewRule(this.plugin.settings.uploadRules, linkPath);
 		if (rule == null) return;
 
 		const urlPrefix = getEffectiveUrlPrefix(
@@ -106,6 +107,7 @@ export class WebDavMediaLoader implements MediaDomLoader {
 			this.plugin.settings.url,
 		);
 		let resolvedLinkPath = linkPath;
+		let remotePath: string;
 		if (isBareAttachmentPath(linkPath)) {
 			const fileName = getFileNameParts(linkPath).nameext;
 			const attachmentFolder = await getAttachmentFolderPath(
@@ -118,9 +120,11 @@ export class WebDavMediaLoader implements MediaDomLoader {
 				fileName,
 				attachmentFolder,
 			) ?? "";
+			remotePath = normalizeRemotePath(resolvedLinkPath);
+		} else {
+			remotePath = normalizeAttachmentPath(resolvedLinkPath, sourcePath);
 		}
 		if (resolvedLinkPath === "") return;
-		const remotePath = normalizeAttachmentPath(resolvedLinkPath, sourcePath);
 		if (urlPrefix === "" || remotePath === "/") return;
 
 		return buildManagedUrl(urlPrefix, remotePath) + getFragment(linkPath);

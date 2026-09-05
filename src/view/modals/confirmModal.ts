@@ -1,4 +1,5 @@
-import { App, Modal, Setting } from "obsidian";
+import { reportTask } from "../../utils";
+import { Modal, Setting, type App } from "obsidian";
 
 export interface ConfirmModalSettings {
 	title?: string;
@@ -7,6 +8,8 @@ export interface ConfirmModalSettings {
 
 export class ConfirmModal extends Modal {
 	settings: ConfirmModalSettings;
+	private submitted = false;
+	private closed = false;
 
 	onSubmit?: () => void | Promise<void>;
 	onCancel?: () => void;
@@ -14,6 +17,13 @@ export class ConfirmModal extends Modal {
 	constructor(app: App, settings: ConfirmModalSettings) {
 		super(app);
 		this.settings = settings;
+	}
+
+	onClose(): void {
+		if (this.closed) return;
+		this.closed = true;
+		if (!this.submitted) this.onCancel?.();
+		this.contentEl.empty();
 	}
 
 	onOpen(): void {
@@ -31,9 +41,6 @@ export class ConfirmModal extends Modal {
 			.addButton((btn) =>
 				btn.setButtonText("Cancel").onClick(() => {
 					this.close();
-					if (this.onCancel) {
-						this.onCancel();
-					}
 				}),
 			)
 			.addButton((btn) =>
@@ -41,10 +48,10 @@ export class ConfirmModal extends Modal {
 					.setButtonText("Confirm")
 					.setCta()
 					.onClick(() => {
+						if (this.submitted || this.closed) return;
+						this.submitted = true;
 						this.close();
-						if (this.onSubmit) {
-							void this.onSubmit();
-						}
+						void reportTask(() => this.onSubmit?.());
 					}),
 			);
 	}

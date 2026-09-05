@@ -2,7 +2,8 @@ const DIRECT_MEDIA_EMBED_CLASS = "webdav-direct-media-embed";
 const STANDALONE_MEDIA_LINE_CLASS = "webdav-standalone-media-line";
 
 export class EditorMediaLayout {
-	private readonly measuredElements = new WeakSet<Element>();
+	private readonly measuredElements = new Map<Element, { event: string; handler: () => void }>();
+	private disposed = false;
 	private readonly markedEmbeds = new Set<HTMLElement>();
 
 	constructor(private readonly requestEditorMeasure?: () => void) { }
@@ -39,12 +40,9 @@ export class EditorMediaLayout {
 				: undefined;
 		if (eventName == null) return;
 
-		this.measuredElements.add(element);
-		element.addEventListener(
-			eventName,
-			() => this.requestEditorMeasure?.(),
-			{ once: true },
-		);
+		const handler = () => { if (!this.disposed) this.requestEditorMeasure?.(); };
+		this.measuredElements.set(element, { event: eventName, handler });
+		element.addEventListener(eventName, handler);
 		this.requestEditorMeasure();
 	}
 
@@ -58,6 +56,12 @@ export class EditorMediaLayout {
 	}
 
 	releaseTree(root: Element) {
+		for (const [element, listener] of this.measuredElements) {
+			if (element === root || root.contains(element)) {
+				element.removeEventListener(listener.event, listener.handler);
+				this.measuredElements.delete(element);
+			}
+		}
 		const embeds = root.matches(`.${DIRECT_MEDIA_EMBED_CLASS}`)
 			? [root]
 			: Array.from(
@@ -80,6 +84,9 @@ export class EditorMediaLayout {
 	}
 
 	dispose() {
+		this.disposed = true;
+		for (const [element, listener] of this.measuredElements) element.removeEventListener(listener.event, listener.handler);
+		this.measuredElements.clear();
 		for (const embed of this.markedEmbeds) {
 			const line = getContainingEditorLine(embed);
 			embed.classList.remove(DIRECT_MEDIA_EMBED_CLASS);

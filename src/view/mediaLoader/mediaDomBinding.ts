@@ -1,8 +1,8 @@
-import { type BlobHandle, WebDavBlobStore } from "../lib/webDavBlobStore";
-import { getMediaType, type MediaType } from "../lib/fileTypes";
-import { getFileNameParts } from "../lib/uploadRules";
+import { WebDavBlobStore, type BlobHandle } from "../../lib/webdavClient/webdavBlobStore";
+import { getMediaType, type MediaType } from "../../lib/attachment/fileTypes";
+import { getFileNameParts } from "../../lib/attachment/uploadRules";
 import { EditorMediaLayout } from "./editorMediaLayout";
-import type { MediaAdapter } from "./mediaLoader";
+import type { MediaAdapter } from ".";
 import {
 	copyMediaPresentation,
 	createMediaElement,
@@ -35,14 +35,14 @@ export class MediaDomBinding {
 	private readonly transforms = new Map<Element, () => void>();
 	private readonly missingPreparations = new WeakMap<
 		HTMLElement,
-		Promise<Element | undefined>
+		{ source: string | null; sourcePath: string; pending: Promise<Element | undefined> }
 	>();
 	private readonly editorLayout: EditorMediaLayout;
 	private readonly observer?: MutationObserver;
 	private disposed = false;
 
 	constructor(
-		container: HTMLElement,
+		private readonly container: HTMLElement,
 		private readonly loader: MediaDomLoader,
 		observe: boolean,
 		private readonly getSourcePath: () => string,
@@ -67,7 +67,7 @@ export class MediaDomBinding {
 		this.scan(container);
 	}
 
-	dispose(restoreSources = false) {
+	dispose(restoreSources = true) {
 		if (this.disposed) return;
 		this.disposed = true;
 		this.observer?.disconnect();
@@ -133,11 +133,18 @@ export class MediaDomBinding {
 	}
 
 	private async processElement(element: Element) {
-		if (this.disposed) return;
+		try { await this.bindElement(element); }
+		catch (error) {
+			if (!this.disposed) console.error("Failed to prepare WebDAV media", error);
+		}
+	}
+
+	private async bindElement(element: Element) {
+		if (this.disposed || !this.container.contains(element)) return;
 
 		const preparedElement = await this.prepareElement(element);
 		if (preparedElement == null) return;
-		if (this.disposed) return;
+		if (this.disposed || !this.container.contains(preparedElement)) return;
 		element = preparedElement;
 
 		const adapter = this.loader.getAdapter(element);
@@ -169,9 +176,11 @@ export class MediaDomBinding {
 			const handle = await this.loader.blobStore.acquire(currentUrl);
 			if (
 				this.disposed ||
-				this.bindings.get(element) !== binding
+				this.bindings.get(element) !== binding || !this.container.contains(element) ||
+				adapter.getSource(element) !== binding.displayedUrl
 			) {
 				handle.release();
+				if (this.bindings.get(element) === binding) this.bindings.delete(element);
 				return;
 			}
 
@@ -182,7 +191,8 @@ export class MediaDomBinding {
 		} catch (error) {
 			if (this.bindings.get(element) !== binding) return;
 
-			binding.displayedUrl = adapter.getSource(element);
+			binding.handle?.release();
+			this.bindings.delete(element);
 			console.error(
 				`Failed to load WebDAV media: '${binding.originalUrl}'`,
 				error,
@@ -221,14 +231,16 @@ export class MediaDomBinding {
 		container: HTMLElement,
 	): Promise<Element | undefined> {
 		const existing = this.missingPreparations.get(container);
-		if (existing != null) return await existing;
+		const source = container.getAttribute("src");
+		const sourcePath = this.getSourcePath();
+		if (existing != null && existing.source === source && existing.sourcePath === sourcePath) return await existing.pending;
 
 		const preparation = this.prepareMissingAttachment(container);
-		this.missingPreparations.set(container, preparation);
+		this.missingPreparations.set(container, { source, sourcePath, pending: preparation });
 		try {
 			return await preparation;
 		} finally {
-			if (this.missingPreparations.get(container) === preparation) {
+			if (this.missingPreparations.get(container)?.pending === preparation) {
 				this.missingPreparations.delete(container);
 			}
 		}
@@ -243,12 +255,15 @@ export class MediaDomBinding {
 		const mediaType = getMediaType(sourcePath);
 		if (mediaType == null) return;
 
+		const notePath = this.getSourcePath();
 		const sourceUrl = await this.loader.resolveMissingAttachment(
 			sourcePath,
-			this.getSourcePath(),
+			notePath,
 		);
 		if (sourceUrl == null) return;
-		if (this.disposed || !container.matches(MISSING_ATTACHMENT_SELECTOR)) {
+		if (this.disposed || !this.container.contains(container) ||
+			container.getAttribute("src")?.trim() !== sourcePath || this.getSourcePath() !== notePath ||
+			!container.matches(MISSING_ATTACHMENT_SELECTOR)) {
 			return;
 		}
 
@@ -339,7 +354,7 @@ export class MediaDomBinding {
 		binding: ElementBinding,
 		restoreSource: boolean,
 	) {
-		if (restoreSource) {
+		if (restoreSource && binding.adapter.getSource(element) === binding.displayedUrl) {
 			binding.adapter.restoreSource(element, binding.originalUrl);
 		}
 		binding.handle?.release();

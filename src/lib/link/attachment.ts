@@ -1,10 +1,11 @@
-import { TFile } from "obsidian";
-import WebDavImageUploaderPlugin from "../../main";
+import { TransferSkippedError, type TransferSession } from "../transfer/transferSession";
+import { getFragment } from "../attachment/attachmentPaths";
+import type { TFile } from "obsidian";
+import type WebDavImageUploaderPlugin from "../../main";
 import {
 	getFileByPath,
 	getFormatVariables,
 	isLocalPath,
-	LinkInfo,
 } from "../../utils";
 import {
 	buildManagedUrl,
@@ -14,32 +15,43 @@ import {
 	getManagedUrlPrefix,
 	normalizeRemotePath,
 	resolveUploadTarget,
-} from "../uploadRules";
+} from "../attachment/uploadRules";
 import {
 	getAttachmentFolderPath,
 	getNewLinkFormat,
 	getUseMarkdownLinks,
-} from "../obsidianPaths";
-import { Link, LinkData } from "./types";
+} from "../attachment/obsidianPaths";
+import type { Link, LinkData, LinkContext } from "./types";
 
 export class AttachmentLink<T extends LinkData> implements Link<T> {
 	plugin: WebDavImageUploaderPlugin;
 
-	data: T;
+	readonly data: T;
+	readonly session: TransferSession;
+	protected sourcePath: string;
+	protected remoteUrl?: string;
 
 	linkType: "local" | "external";
 
 	tFile: TFile | null = null;
 
-	constructor(plugin: WebDavImageUploaderPlugin, data: T) {
+	constructor(plugin: WebDavImageUploaderPlugin, data: T, context: LinkContext) {
 		this.plugin = plugin;
-		this.data = data;
+		this.data = data instanceof File ? data : { ...data };
+		this.session = context.session;
+		this.sourcePath = context.sourcePath;
 
 		if (data instanceof File) {
 			this.linkType = "local";
 		} else {
 			this.linkType = isLocalPath(data.path) ? "local" : "external";
 		}
+	}
+
+	getRemoteUrl(): string {
+		if (this.remoteUrl != null) return this.remoteUrl;
+		if (this.data instanceof File) throw new Error("File has no remote URL.");
+		return this.data.path;
 	}
 
 	init(): Promise<void> {
@@ -54,18 +66,16 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		if (this.data instanceof File) {
 			return (
 				findUploadRule(
-					this.plugin.settings.uploadRules,
+					this.session.settings.uploadRules,
 					this.data.name,
+					false,
 				) != null
 			);
 		}
 
-		return (
-			findUploadRule(
-				this.plugin.settings.uploadRules,
-				this.data.path,
-			) != null
-		);
+		const file = getFileByPath(this.plugin.app, this.data.path, this.sourcePath, this.data.syntax !== "wiki");
+		return findUploadRule(this.session.settings.uploadRules,
+			file?.name ?? this.data.path, file == null && this.data.syntax !== "wiki") != null;
 	}
 
 	downloadable(): boolean {
@@ -77,7 +87,7 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			return false;
 		}
 
-		return this.plugin.isWebdavUrl(this.data.path);
+		try { this.session.client.getPath(this.getRemoteUrl()); return true; } catch { return false; }
 	}
 
 	getTFile() {
@@ -95,7 +105,7 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			);
 		}
 
-		this.tFile = getFileByPath(this.plugin.app, this.data.path);
+		this.tFile = getFileByPath(this.plugin.app, this.data.path, this.sourcePath, this.data.syntax !== "wiki");
 		if (this.tFile == null) {
 			throw new Error(`File not found: '${this.data.path}'`);
 		}
@@ -109,20 +119,24 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 				this.data instanceof File ? this.data.name : this.data.path;
 			if (
 				this.linkType === "local" &&
-				findUploadRule(this.plugin.settings.uploadRules, fileName) ==
+				findUploadRule(this.session.settings.uploadRules, fileName) ==
 				null
 			) {
-				throw new Error(`No upload rule matched '${fileName}'.`);
+				throw new TransferSkippedError(`No upload rule matched '${fileName}'.`);
 			}
 			throw new Error(`Cannot upload '${fileName}'`);
 		}
 
 		let file;
+		let source: TFile | undefined;
 		if (this.data instanceof File) {
 			file = this.data;
 		} else {
 			const tFile = this.getTFile();
+			source = tFile;
+			const mtime = tFile.stat.mtime;
 			const buffer = await this.plugin.app.vault.readBinary(tFile);
+			if (tFile.stat.mtime !== mtime) throw new Error("Attachment changed while being read.");
 			file = new File([buffer], tFile.name, {
 				lastModified: tFile.stat.mtime,
 			});
@@ -130,29 +144,25 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 
 		const attachmentFolder = await getAttachmentFolderPath(
 			this.plugin.app,
-			note.path,
+			this.sourcePath,
 			file.name,
 		);
-		const vars = getFormatVariables(file, note, attachmentFolder);
+		const vars = getFormatVariables(file, this.session.getNoteInfo(this.sourcePath) ?? note, attachmentFolder);
 		const target = resolveUploadTarget(
-			this.plugin.settings.uploadRules,
+			this.session.settings.uploadRules,
 			file.name,
-			this.plugin.settings.url,
+			this.session.settings.url,
 			vars,
 		);
 		if (target == null) {
-			throw new Error(`No upload rule matched '${file.name}'.`);
+			throw new TransferSkippedError(`No upload rule matched '${file.name}'.`);
 		}
 
-		const fileInfo = await this.plugin.client.uploadFile(
-			file,
-			target.remotePath,
-			target.url,
-		);
+		const fileInfo = await this.session.upload(file, target, source);
 
 		return {
-			fileName: file.name,
-			url: fileInfo.url,
+			...fileInfo,
+			localPath: target.linkType === "local" ? fileInfo.remotePath.substring(1) : undefined,
 			markdownLink: target.linkType === "external"
 				? formatUploadLink(
 					{
@@ -162,14 +172,16 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 					file.name,
 					true,
 				)
-				: this.formatLocalLink(note, target.linkTarget, file.name),
+				: this.formatLocalLink(note, fileInfo.remotePath.substring(1), file.name),
 		};
 	}
 
-	formatLocalLink(note: TFile, vaultPath: string, fileName: string): string {
+	formatLocalLink(_note: TFile, vaultPath: string, fileName: string): string {
+		const localFile = this.plugin.app.vault.getFileByPath(vaultPath.replace(/^\//, ""));
+		if (localFile != null) return this.plugin.app.fileManager.generateMarkdownLink(localFile, this.sourcePath);
 		const linkTarget = getLocalLinkTarget(
 			vaultPath,
-			note.path,
+			this.sourcePath,
 			getNewLinkFormat(this.plugin.app),
 		);
 		return formatUploadLink(
@@ -184,8 +196,8 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			throw new Error("File is not downloadable");
 		}
 
-		this.tFile = await this.plugin.client.downloadFile(
-			(this.data as LinkInfo).path,
+		this.tFile = await this.session.client.downloadFile(
+			this.getRemoteUrl(),
 		);
 
 		const markdownLink = this.formatLocalLink(
@@ -205,27 +217,28 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			throw new Error("File can not be renamed.");
 		}
 
-		const oldUrl = (this.data as LinkInfo).path;
-		const oldPath = this.plugin.client.getPath(oldUrl);
+		const oldUrl = this.getRemoteUrl();
+		const oldPath = this.session.client.getPath(oldUrl);
 		const urlPrefix = getManagedUrlPrefix(
 			oldUrl,
-			this.plugin.settings.url,
-			this.plugin.settings.uploadRules,
+			this.session.settings.url,
+			this.session.settings.uploadRules,
 		);
 		if (urlPrefix == null) {
 			throw new Error(`No upload rule recognizes '${oldUrl}'.`);
 		}
 
 		const normalizedNewPath = normalizeRemotePath(newPath);
-		await this.plugin.client.renameFile(oldPath, normalizedNewPath);
+		await this.session.client.renameFile(oldPath, normalizedNewPath);
 
-		return buildManagedUrl(urlPrefix, normalizedNewPath);
+		this.remoteUrl = buildManagedUrl(urlPrefix, normalizedNewPath) + getFragment(oldUrl);
+		return this.remoteUrl;
 	}
 
 	async delete(_note: TFile) {
 		if (!this.downloadable()) {
 			throw new Error("File is not deletable");
 		}
-		await this.plugin.client.deleteFile((this.data as LinkInfo).path);
+		await this.session.client.deleteFile(this.getRemoteUrl());
 	}
 }

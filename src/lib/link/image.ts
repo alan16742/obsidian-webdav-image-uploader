@@ -1,33 +1,29 @@
-import WebDavImageUploaderPlugin from "../../main";
+import type WebDavImageUploaderPlugin from "../../main";
 import { AttachmentLink } from "./attachment";
-import { TFile } from "obsidian";
-import { LinkData, LinkFactory } from "./types";
-import type { FileType } from "../fileTypes";
+import type { TFile } from "obsidian";
+import type { LinkData, LinkFactory, LinkContext } from "./types";
+import type { FileType } from "../attachment/fileTypes";
 
 const factory: LinkFactory = {
 	create<T extends LinkData>(
 		plugin: WebDavImageUploaderPlugin,
 		type: FileType,
 		data: T,
+		context: LinkContext,
 	) {
 		if (type !== "image") {
 			return null;
 		}
-		return new ImageLink(plugin, data);
+		return new ImageLink(plugin, data, context);
 	},
 };
 export default factory;
 
 export class ImageLink<T extends LinkData> extends AttachmentLink<T> {
-	constructor(plugin: WebDavImageUploaderPlugin, data: T) {
-		super(plugin, data);
-	}
-
 	async upload(note: TFile) {
 		const uploadInfo = await super.upload(note);
 		return {
-			fileName: uploadInfo.fileName ?? "",
-			url: uploadInfo.url,
+			...uploadInfo,
 			markdownLink: uploadInfo.markdownLink.startsWith("!")
 				? uploadInfo.markdownLink
 				: `!${uploadInfo.markdownLink}`,

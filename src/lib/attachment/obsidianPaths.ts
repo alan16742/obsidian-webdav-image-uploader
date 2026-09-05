@@ -1,5 +1,5 @@
 import type { App } from "obsidian";
-import { normalizeVaultPath } from "./attachmentPath";
+import { normalizeVaultPath } from "./attachmentPaths";
 
 export type NewLinkFormat = "shortest" | "relative" | "absolute";
 

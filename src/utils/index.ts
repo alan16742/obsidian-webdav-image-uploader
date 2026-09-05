@@ -1,14 +1,20 @@
 import {
-	App,
-	Editor,
 	MarkdownView,
 	Notice,
 	moment,
+	type App,
+	type Editor,
 } from "obsidian";
-export { getFileType } from "../lib/fileTypes";
-export type { FileType } from "../lib/fileTypes";
-import { safeDecodeURIComponent } from "../lib/attachmentPath";
+export { getFileType } from "../lib/attachment/fileTypes";
+export type { FileType } from "../lib/attachment/fileTypes";
+import { hasUrlScheme, safeDecodeURIComponent } from "../lib/attachment/attachmentPaths";
+import { matchLinks, type LinkInfo } from "../lib/note/noteLinks";
+export { matchLinks } from "../lib/note/noteLinks";
+export type { LinkInfo } from "../lib/note/noteLinks";
 
+export async function reportTask(task: () => void | Promise<void>): Promise<void> {
+	try { await task(); } catch (error) { noticeError(String(error)); }
+}
 export interface NoteInfo {
 	basename: string;
 	stat: {
@@ -57,6 +63,9 @@ export function replaceLink(
 	newLink?: string,
 ) {
 	const line = editor.getLine(lineNumber);
+	if (line.slice(link.start, link.end) !== link.raw) {
+		throw new Error("The note changed. The original link was not replaced.");
+	}
 	const newLine =
 		line.substring(0, link.start) +
 		(newLink ?? "") +
@@ -64,10 +73,11 @@ export function replaceLink(
 	editor.setLine(lineNumber, newLine);
 }
 
-export function getFileByPath(app: App, path: string) {
-	path = safeDecodeURIComponent(path);
+export function getFileByPath(app: App, path: string, sourcePath: string, encoded = true) {
+	path = path.split("#", 1)[0];
+	if (encoded) path = safeDecodeURIComponent(path);
 	// https://forum.obsidian.md/t/how-to-get-full-paths-from-link-text
-	return app.metadataCache.getFirstLinkpathDest(path, "");
+	return app.metadataCache.getFirstLinkpathDest(path, sourcePath);
 }
 
 // get link currently selected
@@ -80,143 +90,8 @@ export function getSelectedLink(editor: Editor) {
 	);
 }
 
-// get all links in line
-export function matchLinks(content: string): LinkInfo[] {
-	const links: LinkInfo[] = [];
-
-	for (let i = 0; i < content.length; i++) {
-		if (content[i] !== "[") {
-			continue;
-		}
-
-		// The opening bracket may be prefixed with "!" for an embed (e.g.
-		// "![[file]]" or "![file](url)"). Include the "!" in the matched range so
-		// replacing the link preserves the embed marker.
-		const isEmbed = i > 0 && content[i - 1] === "!";
-		const start = isEmbed ? i - 1 : i;
-
-		const matched =
-			content[i + 1] === "["
-				? scanWikilink(content, i)
-				: scanMarkdownLink(content, i);
-		if (matched == null) {
-			continue;
-		}
-
-		links.push({
-			start,
-			end: matched.end,
-			raw: content.slice(start, matched.end),
-			name: matched.name,
-			path: matched.path,
-		});
-		i = matched.end - 1;
-	}
-
-	// Reverse so callers can replace links from back to front without
-	// invalidating the offsets of the remaining links.
-	return links.reverse();
-}
-
-// Matches "[[target]]" and "[[target|alias]]".
-function scanWikilink(
-	content: string,
-	openIndex: number,
-): { end: number; path: string; name: string } | null {
-	// Find the closing "]]", allowing an optional "|alias" before it.
-	let i = openIndex + 2;
-	let pathEnd = -1;
-	while (i < content.length) {
-		if (content[i] === "|") {
-			pathEnd = i;
-			break;
-		}
-		if (content[i] === "]" && content[i + 1] === "]") {
-			pathEnd = i;
-			break;
-		}
-		i++;
-	}
-	if (pathEnd === -1) {
-		return null;
-	}
-
-	const path = content.slice(openIndex + 2, pathEnd);
-	// A target can't be empty (mirrors the original `[^|\]]+`).
-	if (path === "") {
-		return null;
-	}
-
-	// No alias: "[[target]]".
-	if (content[pathEnd] === "]") {
-		return { end: pathEnd + 2, path, name: "" };
-	}
-
-	// Alias: "[[target|alias]]".
-	const aliasEnd = content.indexOf("]]", pathEnd + 1);
-	if (aliasEnd === -1) {
-		return null;
-	}
-	return {
-		end: aliasEnd + 2,
-		path,
-		name: content.slice(pathEnd + 1, aliasEnd),
-	};
-}
-
-// Matches "[text](url)". URLs may contain balanced parentheses (e.g.
-// Wikipedia-style links), which the previous regex truncated at the first ")".
-function scanMarkdownLink(
-	content: string,
-	openIndex: number,
-): { end: number; path: string; name: string } | null {
-	// Find the "]" that is immediately followed by "(" (the start of the URL).
-	let i = openIndex + 1;
-	while (
-		i < content.length &&
-		!(content[i] === "]" && content[i + 1] === "(")
-	) {
-		i++;
-	}
-	if (i >= content.length) {
-		return null;
-	}
-
-	const name = content.slice(openIndex + 1, i);
-
-	// Scan the URL, balancing parentheses so an inner ")" doesn't end the link
-	// early.
-	let depth = 1;
-	let j = i + 2;
-	while (j < content.length && depth > 0) {
-		if (content[j] === "(") {
-			depth++;
-		} else if (content[j] === ")") {
-			depth--;
-		}
-		j++;
-	}
-	if (depth !== 0) {
-		return null;
-	}
-
-	return {
-		end: j,
-		path: content.slice(i + 2, j - 1),
-		name,
-	};
-}
-
-export interface LinkInfo {
-	start: number;
-	end: number;
-	name: string;
-	path: string;
-	raw: string;
-}
-
 export function isLocalPath(path: string) {
-	return !path.startsWith("http://") && !path.startsWith("https://");
+	return !hasUrlScheme(path) && !path.startsWith("//");
 }
 
 export function noticeError(message: string, ...args: unknown[]) {

@@ -28,7 +28,8 @@ export function normalizeAttachmentPath(
 			segments.pop();
 			continue;
 		}
-		segments.push(segment);
+		if (/[\\/]/.test(decodedSegment)) throw new Error("Encoded path separators are not supported.");
+		segments.push(decodedSegment);
 	}
 	return "/" + segments.join("/");
 }
@@ -43,9 +44,8 @@ export function normalizeAttachmentPath(
 export function normalizeVaultPath(source: string): string {
 	const segments: string[] = [];
 	for (const segment of source.replace(/\\/g, "/").split("/")) {
-		const decodedSegment = safeDecodeURIComponent(segment);
-		if (decodedSegment === "" || decodedSegment === ".") continue;
-		if (decodedSegment === "..") {
+		if (segment === "" || segment === ".") continue;
+		if (segment === "..") {
 			if (segments.length === 0) {
 				throw new Error("Path cannot escape the vault root.");
 			}

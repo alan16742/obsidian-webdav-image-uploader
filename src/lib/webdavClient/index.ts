@@ -1,9 +1,11 @@
-import WebDavImageUploaderPlugin from "../../main";
-import { extractRemotePath } from "../uploadRules";
+import type { WebDavImageUploaderSettings } from "../../settings";
+import { TransferSkippedError } from "../transfer/transferErrors";
+import type WebDavImageUploaderPlugin from "../../main";
+import { buildManagedUrl, extractRemotePath } from "../attachment/uploadRules";
 import {
 	ensureVaultParentFolder,
 	getAvailableVaultPath,
-} from "../obsidianPaths";
+} from "../attachment/obsidianPaths";
 import {
 	WebDavClientInner,
 	type WebDavResource,
@@ -14,14 +16,15 @@ export type { WebDavResource } from "./webdavClientInner";
 export class WebDavClient {
 	plugin: WebDavImageUploaderPlugin;
 	client!: WebDavClientInner;
+	private settings!: WebDavImageUploaderSettings;
 
-	constructor(plugin: WebDavImageUploaderPlugin) {
+	constructor(plugin: WebDavImageUploaderPlugin, settings = plugin.settings) {
 		this.plugin = plugin;
-		this.initClient();
+		this.initClient(settings);
 	}
 
-	initClient() {
-		const settings = this.plugin.settings;
+	initClient(settings = this.plugin.settings) {
+		this.settings = { ...settings, uploadRules: settings.uploadRules.map(rule => ({ ...rule, extensions: [...rule.extensions] })) };
 		this.client = new WebDavClientInner(settings);
 	}
 
@@ -35,16 +38,31 @@ export class WebDavClient {
 		return await this.plugin.app.vault.createBinary(filePath, resp);
 	}
 
-	async uploadFile(file: File, path: string, url: string): Promise<FileInfo> {
+	async uploadFile(file: File, path: string, urlPrefix: string, localSourcePath?: string): Promise<FileInfo> {
 		const buffer = await file.arrayBuffer();
-
-		const success = await this.client.putFileContents(path, buffer);
-
-		if (!success) {
-			throw new Error(`Failed to upload file: '${file.name}'`);
+		const slash = path.lastIndexOf("/");
+		const directory = path.slice(0, slash + 1);
+		const name = path.slice(slash + 1);
+		const dot = name.lastIndexOf(".");
+		const extension = dot > 0 ? name.slice(dot) : "";
+		const candidates = [path, directory + Math.trunc(file.lastModified) + extension];
+		for (let index = 0; index < 3; index++) {
+			if (index === 2) {
+				const digest = await crypto.subtle.digest("SHA-256", buffer);
+				const hash = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join("");
+				candidates.push(directory + hash + extension);
+			}
+			const candidate = candidates[index];
+			if (candidates.indexOf(candidate) !== index) continue;
+			if (localSourcePath != null) {
+				const local = this.plugin.app.vault.getAbstractFileByPath(candidate.substring(1));
+				if (local != null && local.path !== localSourcePath) continue;
+			}
+			if (await this.client.exists(candidate)) continue;
+			if (!await this.client.putFileContents(candidate, buffer)) continue;
+			return { fileName: file.name, remotePath: candidate, url: buildManagedUrl(urlPrefix, candidate) };
 		}
-
-		return { fileName: file.name, url };
+		throw new TransferSkippedError("All upload names already exist (original, mtime and SHA-256): '" + path + "'. Local file retained.");
 	}
 
 	async getFileContents(url: string) {
@@ -85,13 +103,14 @@ export class WebDavClient {
 	getPath(url: string) {
 		return extractRemotePath(
 			url,
-			this.plugin.settings.url,
-			this.plugin.settings.uploadRules,
+			this.settings.url,
+			this.settings.uploadRules,
 		);
 	}
 }
 
 export interface FileInfo {
+	remotePath: string;
 	fileName: string;
 	url: string;
 }

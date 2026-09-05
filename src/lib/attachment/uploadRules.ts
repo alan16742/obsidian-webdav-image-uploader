@@ -1,7 +1,7 @@
 import {
 	normalizeVaultPath,
 	safeDecodeURIComponent,
-} from "./attachmentPath";
+} from "./attachmentPaths";
 import type { NewLinkFormat } from "./obsidianPaths";
 
 export interface UploadRule {
@@ -95,10 +95,10 @@ export function sanitizeUploadRules(settingsData: unknown): UploadRule[] {
 		: [createDefaultUploadRule()];
 }
 
-export function getFileNameParts(filePath: string) {
-	const cleanPath = filePath.split(/[?#]/, 1)[0];
+export function getFileNameParts(filePath: string, isLink = true) {
+	const cleanPath = isLink ? filePath.split(/[?#]/, 1)[0] : filePath;
 	const encodedName = cleanPath.split(/[\\/]/).pop() ?? "";
-	const nameext = safeDecodeURIComponent(encodedName);
+	const nameext = isLink ? safeDecodeURIComponent(encodedName) : encodedName;
 	const dotIndex = nameext.lastIndexOf(".");
 	if (dotIndex <= 0 || dotIndex === nameext.length - 1) {
 		return { name: nameext, extension: "", nameext };
@@ -111,9 +111,9 @@ export function getFileNameParts(filePath: string) {
 	};
 }
 
-export function matchesUploadRule(rule: UploadRule, filePath: string): boolean {
+export function matchesUploadRule(rule: UploadRule, filePath: string, isLink = true): boolean {
 	const normalizedRule = normalizeUploadRule(rule);
-	const { name, extension } = getFileNameParts(filePath);
+	const { name, extension } = getFileNameParts(filePath, isLink);
 	const normalizedName = name.toLowerCase();
 	const prefix = normalizedRule.prefix.toLowerCase();
 	const suffix = normalizedRule.suffix.toLowerCase();
@@ -129,8 +129,18 @@ export function matchesUploadRule(rule: UploadRule, filePath: string): boolean {
 export function findUploadRule(
 	rules: UploadRule[],
 	filePath: string,
+	isLink = true,
 ): UploadRule | null {
-	return rules.find((rule) => matchesUploadRule(rule, filePath)) ?? null;
+	return rules.find((rule) => matchesUploadRule(rule, filePath, isLink)) ?? null;
+}
+
+/** Collision names no longer contain the original rule's filename prefix/suffix. */
+export function findPreviewRule(rules: UploadRule[], path: string): UploadRule | null {
+	const matched = findUploadRule(rules, path);
+	if (matched != null) return matched;
+	const { name, extension } = getFileNameParts(path);
+	if (!/^(?:\d+|[a-f0-9]{64})$/.test(name)) return null;
+	return rules.find(rule => rule.extensions.length === 0 || rule.extensions.includes(extension)) ?? null;
 }
 
 export function formatTemplate(
@@ -255,14 +265,14 @@ export function formatUploadLink(
 	fileName: string,
 	useMarkdownLinks: boolean,
 ): string {
-	if (target.linkType === "local" && !useMarkdownLinks) {
+	if (target.linkType === "local" && !useMarkdownLinks && !/[\[\]|#]/.test(target.linkTarget)) {
 		return `[[${target.linkTarget}]]`;
 	}
 
 	const linkTarget = target.linkType === "local"
 		? encodeLocalLinkPath(target.linkTarget)
 		: target.linkTarget;
-	const linkText = fileName.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+	const linkText = fileName.replace(/\\/g, "\\\\").replace(/[\[\]]/g, "\\$&");
 	return `[${linkText}](${linkTarget})`;
 }
 
@@ -276,7 +286,8 @@ export function getLocalLinkTarget(
 		return "/" + normalizedTarget;
 	}
 	if (newLinkFormat === "shortest") {
-		return normalizedTarget.substring(normalizedTarget.lastIndexOf("/") + 1);
+		// Remote-only files have no local index that can disambiguate a basename.
+		return normalizedTarget;
 	}
 
 	const targetSegments = normalizedTarget.split("/").filter(Boolean);
@@ -325,7 +336,7 @@ export function resolveBareUploadPath(
 		return fileName;
 	}
 
-	const { name, extension, nameext } = getFileNameParts(fileName);
+	const { name, extension, nameext } = getFileNameParts(fileName, false);
 	const directory = formatTemplate(format.substring(0, slashIndex), {
 		attachment: { type: "string", value: attachmentFolder },
 		name: { type: "string", value: name },
@@ -343,7 +354,7 @@ export function resolveUploadTarget(
 	webdavUrl: string,
 	variables: TemplateVariables,
 ): UploadTarget | null {
-	const rule = findUploadRule(rules, filePath);
+	const rule = findUploadRule(rules, filePath, false);
 	return rule == null ? null : buildUploadTarget(rule, webdavUrl, variables);
 }
 
@@ -403,18 +414,16 @@ export function buildManagedUrl(urlPrefix: string, remotePath: string): string {
 	// encodeURI; the remote path is encoded segment-by-segment so a filename
 	// like "a b.png" survives the round trip.
 	const prefix = normalizeUrlPrefix(urlPrefix);
-	return encodeURI(prefix) + encodeRemotePath(remotePath);
+	return encodeUrlPrefix(prefix) + encodeRemotePath(remotePath);
 }
 
 function extractPathForPrefix(url: string, prefix: string): string | null {
 	const cleanUrl = url.trim().split(/[?#]/, 1)[0];
 	const normalizedPrefix = normalizeUrlPrefix(prefix);
-	const encodedPrefix = encodeURI(normalizedPrefix);
-	const matchingPrefix = hasUrlPrefix(cleanUrl, normalizedPrefix)
-		? normalizedPrefix
-		: hasUrlPrefix(cleanUrl, encodedPrefix)
-			? encodedPrefix
-			: null;
+	const encodedPrefix = encodeUrlPrefix(normalizedPrefix);
+	const matchingPrefix = [normalizedPrefix, encodedPrefix].find(
+		(candidate) => cleanUrl === candidate || cleanUrl.startsWith(candidate + "/"),
+	);
 	if (matchingPrefix == null) {
 		return null;
 	}
@@ -427,7 +436,7 @@ function hasUrlPrefix(url: string, prefix: string): boolean {
 	// (generated by buildManagedUrl), so match against both forms.
 	const cleanUrl = url.trim().split(/[?#]/, 1)[0];
 	const normalizedPrefix = normalizeUrlPrefix(prefix);
-	const encodedPrefix = encodeURI(normalizedPrefix);
+	const encodedPrefix = encodeUrlPrefix(normalizedPrefix);
 	return [normalizedPrefix, encodedPrefix].some(
 		(candidate) =>
 			cleanUrl === candidate || cleanUrl.startsWith(candidate + "/"),
@@ -439,11 +448,10 @@ export function normalizeRemotePath(path: string): string {
 }
 
 function encodeRemotePath(path: string): string {
-	// Decode first so already-encoded segments are not double-encoded (a "%20"
-	// in the link must not become "%2520"), then re-encode each segment.
+	// Internal paths are literal filenames; encode exactly once at the URL boundary.
 	return normalizeRemotePath(path)
 		.split("/")
-		.map((segment) => encodeURIComponent(safeDecodeURIComponent(segment)))
+		.map((segment) => encodeURIComponent(segment).replace(/[()]/g, (char) => "%" + char.charCodeAt(0).toString(16).toUpperCase()))
 		.join("/");
 }
 
@@ -456,16 +464,18 @@ function encodeLocalLinkPath(path: string): string {
 		.map((segment) =>
 			segment === "" || segment === "." || segment === ".."
 				? segment
-				: encodeURIComponent(safeDecodeURIComponent(segment)),
+				: encodeURIComponent(segment).replace(/[()]/g, (char) => "%" + char.charCodeAt(0).toString(16).toUpperCase()),
 		)
 		.join("/");
 }
 
 function decodeRemotePath(path: string): string {
-	return normalizeRemotePath(path)
-		.split("/")
-		.map(safeDecodeURIComponent)
-		.join("/");
+	const decoded = path.split("/").map((segment) => {
+		const value = safeDecodeURIComponent(segment);
+		if (/[\\/]/.test(value)) throw new Error("Encoded path separators are not supported.");
+		return value;
+	}).join("/");
+	return normalizeRemotePath(decoded);
 }
 
 function stringValue(value: unknown): string {
@@ -474,4 +484,14 @@ function stringValue(value: unknown): string {
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value != null && !Array.isArray(value);
+}
+
+function encodeUrlPrefix(prefix: string): string {
+	try {
+		const url = new URL(prefix);
+		return url.origin + url.pathname.split("/")
+			.map((segment) => encodeURIComponent(safeDecodeURIComponent(segment))).join("/").replace(/\/+$/, "");
+	} catch {
+		return encodeURI(prefix);
+	}
 }

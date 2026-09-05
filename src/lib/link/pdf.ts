@@ -1,206 +1,114 @@
-import { TFile } from "obsidian";
-import WebDavImageUploaderPlugin from "../../main";
+import type { TFile } from "obsidian";
 import { AttachmentLink } from "./attachment";
-import { LinkData, LinkFactory } from "./types";
-import type { FileType } from "../fileTypes";
-import {
-	ensureVaultParentFolder,
-	getAvailableVaultPath,
-} from "../obsidianPaths";
+import type { LinkData, LinkFactory } from "./types";
+import { ensureVaultParentFolder, getAvailableVaultPath } from "../attachment/obsidianPaths";
 
 const factory: LinkFactory = {
-	create<T extends LinkData>(
-		plugin: WebDavImageUploaderPlugin,
-		type: FileType,
-		data: T,
-	) {
-		if (type !== "pdf") {
-			return null;
-		}
-
-		return new PdfLink(plugin, data);
+	create(plugin, type, data, context) {
+		return type === "pdf" ? new PdfLink(plugin, data, context) : null;
 	},
 };
 export default factory;
 
-/**
- * A PDF link in "dummy PDF" mode.
- *
- * Obsidian cannot preview a remote PDF from a `![](url)` link, so after
- * uploading a PDF this plugin leaves a tiny local `.pdf` whose *content* is
- * just the remote URL (the PDF++ "external PDF files" feature). PdfLink
- * detects that case by reading the local file: for such links the real target
- * is the URL stored inside the file, not the file path.
- *
- * `isDummyPdf` is tri-state — `undefined` means "not inspected yet" — so
- * uploadable()/downloadable() optimistically return true until init() has read
- * the file and can decide.
- */
+/** The note target and the URL stored inside a dummy PDF are distinct values. */
 export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 	dummyFile: TFile | null = null;
-
 	isDummyPdf?: boolean;
+	private initialization?: Promise<void>;
+	private dummyContent = "";
 
-	constructor(plugin: WebDavImageUploaderPlugin, data: T) {
-		super(plugin, data);
+	uploadable(): boolean {
+		return this.isDummyPdf !== true && super.uploadable();
+	}
 
-		if (!this.plugin.settings.enableDummyPdf) {
+	downloadable(): boolean {
+		if (this.linkType === "external") return super.downloadable();
+		return this.session.settings.enableDummyPdf === true &&
+			!(this.data instanceof File) && this.isDummyPdf == null;
+	}
+
+	async init(): Promise<void> {
+		if (this.isDummyPdf != null) return;
+		if (this.initialization == null) this.initialization = this.inspect();
+		try {
+			await this.initialization;
+		} finally {
+			this.initialization = undefined;
+		}
+	}
+
+	private async inspect() {
+		if (!this.session.settings.enableDummyPdf || this.linkType === "external" || this.data instanceof File) {
 			this.isDummyPdf = false;
-		}
-	}
-
-	uploadable() {
-		if (!this.plugin.settings.enableDummyPdf) {
-			return super.uploadable();
-		}
-
-		if (this.linkType === "external") {
-			return false;
-		}
-
-		if (this.data instanceof File) {
-			return true;
-		}
-
-		// assume all pdf is uploadable if not initialized
-		return this.isDummyPdf == null ? true : !this.isDummyPdf;
-	}
-
-	downloadable() {
-		if (!this.plugin.settings.enableDummyPdf) {
-			return super.downloadable();
-		}
-
-		if (this.linkType === "external") {
-			return super.downloadable();
-		}
-
-		if (this.data instanceof File) {
-			return false;
-		}
-
-		// assume all pdf is downloadable if not initialized
-		return this.isDummyPdf == null ? true : this.isDummyPdf;
-	}
-
-	async init() {
-		// initialized
-		if (this.isDummyPdf != null) {
 			return;
 		}
-
-		this.isDummyPdf = false;
-		if (!this.plugin.settings.enableDummyPdf) {
+		const file = this.getTFile();
+		const content = await this.plugin.app.vault.cachedRead(file);
+		const url = content.trim();
+		if (!/^https?:\/\/\S+$/.test(url)) {
+			this.isDummyPdf = false;
 			return;
 		}
-
-		if (this.linkType === "external") {
-			return;
-		}
-
-		if (this.data instanceof File) {
-			this.isDummyPdf = true;
-			return;
-		}
-
-		this.dummyFile = this.getTFile();
-		const content = await this.plugin.app.vault.cachedRead(this.dummyFile);
-
-		// not a dummy pdf
-		if (!content.startsWith("http://") && !content.startsWith("https://")) {
-			return;
-		}
-
-		// The local file is just a pointer: its content is the remote URL.
-		// Rewrite this link to external so later operations target the URL
-		// stored inside the dummy file instead of the dummy file itself.
+		this.dummyFile = file;
+		this.dummyContent = content;
+		this.remoteUrl = url;
 		this.linkType = "external";
-		this.data.path = content;
 		this.isDummyPdf = true;
 	}
 
 	async upload(note: TFile) {
 		await this.init();
-
-		if (!this.uploadable()) {
-			throw new Error("File is not uploadable");
+		const result = await super.upload(note);
+		if (!this.session.settings.enableDummyPdf) return result;
+		let file = this.session.dummyFiles.get(result.url);
+		if (file == null) {
+			const path = getAvailableVaultPath(this.plugin.app, result.remotePath);
+			await ensureVaultParentFolder(this.plugin.app, path);
+			file = await this.plugin.app.vault.create(path, result.url);
+			this.session.dummyFiles.set(result.url, file);
 		}
-
-		if (this.isDummyPdf && this.dummyFile != null) {
-			await this.plugin.app.fileManager.trashFile(this.dummyFile);
-		}
-
-		if (!this.plugin.settings.enableDummyPdf) {
-			return await super.upload(note);
-		}
-
-		const fileInfo = await super.upload(note);
-
-		// create dummy pdf file after uploaded
-		// see: https://ryotaushio.github.io/obsidian-pdf-plus/external-pdf-files.html
-		const remotePath = this.plugin.client.getPath(fileInfo.url);
-		const filePath = getAvailableVaultPath(this.plugin.app, remotePath);
-		await ensureVaultParentFolder(this.plugin.app, filePath);
-		const file = await this.plugin.app.vault.create(filePath, fileInfo.url);
-
-		let link = this.formatLocalLink(note, file.path, file.name);
-
-		if (link[0] !== "!") {
-			link = "!" + link;
-		}
-
-		return {
-			fileName: fileInfo.fileName ?? "",
-			url: fileInfo.url,
-			markdownLink: link,
-		};
+		const markdownLink = this.formatLocalLink(note, file.path, file.name);
+		return { ...result, localPath: file.path, markdownLink: embed(markdownLink) };
 	}
 
 	async download(note: TFile) {
 		await this.init();
-
-		if (!this.downloadable()) {
-			throw new Error("File is not downloadable");
+		if (!this.downloadable()) throw new Error("File is not downloadable.");
+		if (this.dummyFile == null) {
+			const result = await super.download(note);
+			return { ...result, markdownLink: embed(result.markdownLink) };
 		}
-
-		if (this.dummyFile != null) {
-			await this.plugin.app.fileManager.trashFile(this.dummyFile);
-		}
-
-		const file = await super.download(note);
-
-		if (file.markdownLink[0] !== "!") {
-			file.markdownLink = "!" + file.markdownLink;
-		}
-
-		return file;
+		const data = await this.session.client.getFileContents(this.getRemoteUrl());
+		const current = await this.plugin.app.vault.read(this.dummyFile);
+		if (current !== this.dummyContent) throw new Error("Dummy PDF changed during download; local file retained.");
+		await this.plugin.app.vault.modifyBinary(this.dummyFile, data);
+		this.tFile = this.dummyFile;
+		return {
+			tFile: this.dummyFile,
+			markdownLink: embed(this.formatLocalLink(note, this.dummyFile.path, this.dummyFile.name)),
+		};
 	}
 
 	async rename(note: TFile, newPath: string) {
 		await this.init();
-
-		if (!this.downloadable()) {
-			throw new Error("File is not downloadable");
+		const url = await super.rename(note, newPath);
+		if (this.dummyFile != null) {
+			await this.plugin.app.vault.process(this.dummyFile, (content) => {
+				if (content !== this.dummyContent) throw new Error("Dummy PDF changed. Remote file was moved to '" + url + "'; update the pointer manually.");
+				return url;
+			});
+			this.dummyContent = url;
 		}
-
-		const newUrl = await super.rename(note, newPath);
-
-		if (!this.isDummyPdf || this.dummyFile == null) {
-			return newUrl;
-		}
-
-		await this.plugin.app.vault.modify(this.dummyFile, newUrl);
-
-		return newUrl;
+		return url;
 	}
 
 	async delete(note: TFile) {
 		await this.init();
-
 		await super.delete(note);
-
-		if (this.dummyFile != null) {
-			await this.plugin.app.fileManager.trashFile(this.dummyFile);
-		}
+		// Local cleanup belongs to the caller, after the note update commits.
 	}
+}
+
+function embed(link: string): string {
+	return link.startsWith("!") ? link : "!" + link;
 }

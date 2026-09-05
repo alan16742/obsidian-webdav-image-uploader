@@ -1,13 +1,14 @@
 import {
-	Editor,
-	Menu,
 	Notice,
 	Platform,
 	Plugin,
-	TAbstractFile,
 	TFile,
 	TFolder,
+	type Editor,
+	type Menu,
+	type TAbstractFile,
 } from "obsidian";
+import type { MarkdownFileInfo } from "obsidian";
 import { WebDavClient } from "./lib/webdavClient";
 import {
 	createWebDavMediaExtension,
@@ -16,30 +17,22 @@ import {
 	videoMediaAdapter,
 	audioMediaAdapter,
 } from "./view/mediaLoader";
-import {
-	getCurrentEditor,
-	noticeError,
-	replaceLink,
-	getSelectedLink,
-	LinkInfo,
-} from "./utils";
+import { getCurrentEditor, reportTask } from "./utils";
 import {
 	sanitizeSettings,
-	WebDavImageUploaderSettings,
 	WebDavImageUploaderSettingTab,
+	type WebDavImageUploaderSettings,
 } from "./settings";
 import { BatchDownloader, BatchUploader } from "./lib/batch";
-import { ConfirmModal } from "./ui/modals/confirmModal";
-import { Link, createLink } from "./lib/link";
-import { getRenamePath } from "./ui/modals/renameModal";
-import { findUploadRule, isManagedUrl } from "./lib/uploadRules";
+import { ConfirmModal } from "./view/modals/confirmModal";
+import { findUploadRule, isManagedUrl } from "./lib/attachment/uploadRules";
+import { EditorActions } from "./lib/note/editorActions";
 
 export default class WebDavImageUploaderPlugin extends Plugin {
 	settings!: WebDavImageUploaderSettings;
-
 	client!: WebDavClient;
-
 	mediaLoader!: WebDavMediaLoader;
+	private editorActions!: EditorActions;
 
 	async onload() {
 		await this.loadSettings();
@@ -47,6 +40,7 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 		this.addSettingTab(new WebDavImageUploaderSettingTab(this.app, this));
 
 		this.client = new WebDavClient(this);
+		this.editorActions = new EditorActions(this);
 
 		this.mediaLoader = new WebDavMediaLoader(this, [
 			imageMediaAdapter,
@@ -57,7 +51,7 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 		this.addCommand({
 			id: "toggle-auto-upload",
 			name: "Toggle auto upload",
-			callback: this.toggleAutoUpload.bind(this),
+			callback: () => { void reportTask(() => this.toggleAutoUpload()); },
 		});
 
 		// upload file when pasted or dropped
@@ -121,7 +115,8 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 	}
 
 	onunload() {
-		this.mediaLoader.destroy();
+		this.editorActions?.destroy();
+		this.mediaLoader?.destroy();
 	}
 
 	async loadSettings() {
@@ -146,134 +141,12 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 		);
 	}
 
-	async onUploadFile(e: ClipboardEvent | DragEvent, editor: Editor) {
-		if (!this.settings.enableUpload) {
-			return;
-		}
-
-		if (e.defaultPrevented) {
-			return;
-		}
-
-		let fileList: FileList | undefined;
-		if (e.type === "paste") {
-			fileList = (e as ClipboardEvent).clipboardData?.files;
-		} else if (e.type === "drop") {
-			fileList = (e as DragEvent).dataTransfer?.files;
-		}
-
-		const allFiles = Array.from(fileList ?? []);
-		if (allFiles.length === 0) {
-			return;
-		}
-		const files = allFiles.filter((file) => !this.isExcludeFile(file.name));
-		const skippedFiles = allFiles.filter((file) => this.isExcludeFile(file.name));
-		if (files.length === 0) {
-			new Notice(
-				`Skipped ${allFiles.length === 1 ? `'${allFiles[0].name}'` : `${allFiles.length} files`}: no upload rule matched.`,
-			);
-			return;
-		}
-
-		e.preventDefault();
-
-		const activeFile = this.app.workspace.getActiveFile()!;
-		const isBatch = files.length > 1;
-		const notice = isBatch
-			? new Notice(
-				`Uploading ${files.length} files... (0/${files.length})`,
-				0,
-			)
-			: new Notice(`Uploading file: '${files[0].name}'...`, 0);
-
-		const markdownLinks: string[] = [];
-		const errors: string[] = [];
-
-		for (let i = 0; i < files.length; i++) {
-			const file = files[i];
-			if (isBatch) {
-				notice.setMessage(
-					`Uploading ${files.length} files... (${i + 1}/${files.length})`,
-				);
-			}
-			try {
-				const link = createLink(this, file);
-				const fileInfo = await link.upload(activeFile);
-				markdownLinks.push(fileInfo.markdownLink);
-			} catch (err) {
-				errors.push(`'${file.name}': ${err}`);
-			}
-		}
-
-		notice.hide();
-
-		if (markdownLinks.length > 0) {
-			editor.replaceSelection(markdownLinks.join("\n"));
-		}
-
-		for (const msg of errors) {
-			noticeError(`Failed to upload file ${msg}`);
-		}
-		if (skippedFiles.length > 0) {
-			new Notice(
-				`Skipped ${skippedFiles.length} file${skippedFiles.length === 1 ? "" : "s"}: no upload rule matched.`,
-			);
-		}
+	onUploadFile(event: ClipboardEvent | DragEvent, editor: Editor, info?: MarkdownFileInfo) {
+		return this.editorActions.pasteOrDrop(event, editor, info);
 	}
 
-	onRightClickLink(menu: Menu, editor: Editor) {
-		const selectedLink = getSelectedLink(editor);
-		if (selectedLink == null) {
-			return;
-		}
-
-		// BUG: menu events can't running asynchronously (see: https://forum.obsidian.md/t/menu-additem-support-asynchronous-callback-functions/52870)
-		// so we can't get the actual link info if it needs to be initialized by async function
-		// for example, we can not check whether it is a dummy pdf or normal pdf when right-clicking a local `.pdf` link
-		// since it needs to read the file content
-		// for now, it always shows both upload and download items, and throws the error when actually processing
-		const link = createLink(this, selectedLink);
-
-		const lineNumber = editor.getCursor().line;
-		if (link.downloadable()) {
-			menu.addItem((item) =>
-				item
-					.setTitle("Download file from WebDAV")
-					.setIcon("arrow-down-from-line")
-					.onClick(() => {
-						void this.onDownloadFile(lineNumber, link, editor);
-					}),
-			);
-
-			menu.addItem((item) =>
-				item
-					.setTitle("Delete file from WebDAV")
-					.setIcon("trash")
-					.onClick(() => {
-						void this.onDeleteFile(lineNumber, link, editor);
-					}),
-			);
-
-			menu.addItem((item) =>
-				item
-					.setTitle("Rename file from WebDAV")
-					.setIcon("pencil-line")
-					.onClick(() => {
-						void this.onRenameFile(lineNumber, link, editor);
-					}),
-			);
-		}
-
-		if (link.uploadable()) {
-			menu.addItem((item) =>
-				item
-					.setTitle("Upload file to WebDAV")
-					.setIcon("arrow-up-from-line")
-					.onClick(() => {
-						void this.onUploadLocalFile(lineNumber, link, editor);
-					}),
-			);
-		}
+	onRightClickLink(menu: Menu, editor: Editor, info?: MarkdownFileInfo) {
+		this.editorActions.addMenu(menu, editor, info);
 	}
 
 	async onRightClickExplorer(menu: Menu, file: TAbstractFile) {
@@ -354,119 +227,11 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 		}
 	}
 
-	async onDownloadFile(
-		lineNumber: number,
-		link: Link<LinkInfo>,
-		editor: Editor,
-	) {
-		await link.init();
-		const linkInfo = link.data;
-
-		const notice = new Notice(`Downloading file '${linkInfo.path}'...`, 0);
-		try {
-			const activeFile = this.app.workspace.getActiveFile()!;
-			const newLink = await link.download(activeFile);
-			replaceLink(editor, lineNumber, linkInfo, newLink.markdownLink);
-		} catch (e) {
-			noticeError(`Failed to download '${linkInfo.path}', ${e}`);
-		}
-
-		notice.hide();
-	}
-
-	async onUploadLocalFile(
-		lineNumber: number,
-		link: Link<LinkInfo>,
-		editor: Editor,
-	) {
-		await link.init();
-		const linkInfo = link.data;
-
-		const notice = new Notice(`Uploading file '${linkInfo.path}'...`, 0);
-		try {
-			const activeFile = this.app.workspace.getActiveFile()!;
-			const fileInfo = await link.upload(activeFile);
-
-			await this.deleteLocalFile(link.getTFile());
-
-			replaceLink(editor, lineNumber, linkInfo, fileInfo.markdownLink);
-
-			new Notice(`File '${linkInfo.path}' uploaded successfully.`);
-		} catch (e) {
-			noticeError(`Failed to upload file '${linkInfo.path}', ${e}`);
-		}
-
-		notice.hide();
-	}
-
-	async onRenameFile(
-		lineNumber: number,
-		link: Link<LinkInfo>,
-		editor: Editor,
-	) {
-		await link.init();
-		const linkInfo = link.data;
-
-		const oldPath = this.client.getPath(linkInfo.path);
-		const newPath = await getRenamePath(this.app, oldPath);
-		if (newPath == null) {
-			return;
-		}
-
-		const notice = new Notice(
-			`Renaming file '${linkInfo.path}' to '${newPath}'...`,
-			0,
-		);
-
-		try {
-			const activeFile = this.app.workspace.getActiveFile()!;
-			const newUrl = await link.rename(activeFile, newPath);
-			const markdownLink = linkInfo.raw.replace(linkInfo.path, newUrl);
-
-			replaceLink(editor, lineNumber, linkInfo, markdownLink);
-
-			new Notice(`File rename successfully.`);
-		} catch (e) {
-			noticeError(`Failed to rename file '${linkInfo.path}', ${e}`);
-		}
-
-		notice.hide();
-	}
-
-	async onDeleteFile(
-		lineNumber: number,
-		link: Link<LinkInfo>,
-		editor: Editor,
-	) {
-		await link.init();
-		const linkInfo = link.data;
-
-		const notice = new Notice(`Deleting file '${linkInfo.path}'...`, 0);
-		try {
-			const activeFile = this.app.workspace.getActiveFile()!;
-			await link.delete(activeFile);
-			replaceLink(editor, lineNumber, linkInfo);
-		} catch (e) {
-			noticeError(`Failed to delete file '${linkInfo.path}', ${e}`);
-		}
-
-		notice.hide();
-	}
-
-	async deleteLocalFile(file: TFile) {
-		const operation = this.settings.uploadedFileOperation;
-		if (operation === "default") {
-			await this.app.fileManager.trashFile(file);
-		} else if (operation === "delete") {
-			await this.app.vault.delete(file);
-		}
-	}
-
 	isWebdavUrl(url: string) {
 		return isManagedUrl(url, this.settings.url, this.settings.uploadRules);
 	}
 
 	isExcludeFile(path: string) {
-		return findUploadRule(this.settings.uploadRules, path) == null;
+		return findUploadRule(this.settings.uploadRules, path, false) == null;
 	}
 }

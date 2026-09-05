@@ -1,18 +1,18 @@
-import { App, Notice, Setting } from "obsidian";
-import type WebDavImageUploaderPlugin from "../main";
-import { getFormatVariables } from "../utils";
+import { Notice, Setting, type App } from "obsidian";
+import type WebDavImageUploaderPlugin from "../../main";
+import { getFormatVariables } from "../../utils";
 import {
 	buildUploadTarget,
 	getLocalLinkTarget,
 	normalizeExtension,
 	normalizeUploadRule,
 	TEMPLATE_VARIABLE_NAMES,
-	UploadRule,
-} from "../lib/uploadRules";
+	type UploadRule,
+} from "../../lib/attachment/uploadRules";
 import {
 	getAttachmentFolderPath,
 	getNewLinkFormat,
-} from "../lib/obsidianPaths";
+} from "../../lib/attachment/obsidianPaths";
 
 interface UploadRuleCard {
 	cardEl: HTMLDetailsElement;
