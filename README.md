@@ -9,7 +9,7 @@ This is an Obsidian (https://obsidian.md) plugin for managing local images by st
 ### Upload, Download, and Delete Files
 
 - When pasting or dragging images into a note, the plugin will intercept the action, select the first matching upload rule, upload the image to the corresponding WebDAV path, and insert the generated preview link (for example, `![file](https://yourdomain.com/dav/path/to/file.jpg)` or `![[file.jpg]]`). You can enable/disable it in the plugin settings, or execute `WebDAV Image Uploader: Toggle auto upload` command.
-- You can also right-click on a local image link (`![file](attachments/file.jpg)`) and select the `Upload file to WebDAV` option from the menu to upload the image and insert the link. You can configure whether to keep the local file after a successful upload.
+- When `Upload local files from links` is enabled, you can right-click on an existing local file link (`![file](attachments/file.jpg)`, `[](attachments/file.jpg)`, or `[[attachments/file.jpg]]`) and select the `Upload file to WebDAV` option. Batch upload also processes these local links. You can configure whether to keep the local file after a successful upload.
 - When right-clicking a preview link, you can select `Download file from WebDAV` to download the image locally. The path is related to your Obsidian configuration (Settings -> Files & Links).
 - When right-clicking a preview link, you can select `Delete file from WebDAV` to delete the image from the WebDAV server and remove the link from the note.
 - When right-clicking a preview link, you can select `Rename file from WebDAV` to rename(move) the image from the WebDAV server.

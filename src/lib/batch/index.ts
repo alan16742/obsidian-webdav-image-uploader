@@ -58,7 +58,7 @@ class BatchProcessor {
 		this.session.captureNote(note);
 		const snapshot = await this.plugin.app.vault.read(note);
 		const links = matchLinks(snapshot).filter(link => upload
-			? isLocalPath(link.path)
+			? this.session.settings.enableLocalLinkUpload && isLocalPath(link.path)
 			: isManagedUrl(link.path, this.session.settings.url, this.session.settings.uploadRules) ||
 			(this.session.settings.enableDummyPdf && isLocalPath(link.path) && getFileType(link.path) === "pdf"));
 		const pending: { edit: NoteEdit; result: BatchProcessFileResult; file?: TFile; version?: FileVersion }[] = [];

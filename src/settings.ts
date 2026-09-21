@@ -29,6 +29,7 @@ export interface WebDavImageUploaderSettings {
 
 	// Upload
 	enableUpload: boolean;
+	enableLocalLinkUpload: boolean;
 	uploadedFileOperation: "default" | "delete" | "none";
 	enableDummyPdf?: boolean;
 	uploadRules: UploadRule[];
@@ -44,6 +45,7 @@ export const DEFAULT_SETTINGS: WebDavImageUploaderSettings = {
 	disableBasicAuth: false,
 
 	enableUpload: true,
+	enableLocalLinkUpload: false,
 	uploadedFileOperation: "delete",
 	enableDummyPdf: false,
 	uploadRules: [
@@ -83,6 +85,7 @@ export function sanitizeSettings(data: unknown): WebDavImageUploaderSettings {
 	for (const key of [
 		"disableBasicAuth",
 		"enableUpload",
+		"enableLocalLinkUpload",
 		"enableDummyPdf",
 		"createBatchLog",
 	] as const) {
@@ -231,6 +234,20 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.enableUpload)
 					.onChange((value) => {
 						this.plugin.settings.enableUpload = value;
+						this.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Upload local files from links")
+			.setDesc(
+				"Allow existing local files referenced by Markdown links or Wikilinks, such as [](path) and [[path]], to be uploaded."
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.enableLocalLinkUpload)
+					.onChange((value) => {
+						this.plugin.settings.enableLocalLinkUpload = value;
 						this.saveSettings();
 					})
 			);

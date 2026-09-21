@@ -7,7 +7,11 @@ import {
 } from "obsidian";
 export { getFileType } from "../lib/attachment/fileTypes";
 export type { FileType } from "../lib/attachment/fileTypes";
-import { hasUrlScheme, safeDecodeURIComponent } from "../lib/attachment/attachmentPaths";
+import {
+	hasUrlScheme,
+	normalizeAttachmentPath,
+	safeDecodeURIComponent,
+} from "../lib/attachment/attachmentPaths";
 import { matchLinks, type LinkInfo } from "../lib/note/noteLinks";
 export { matchLinks } from "../lib/note/noteLinks";
 export type { LinkInfo } from "../lib/note/noteLinks";
@@ -74,10 +78,18 @@ export function replaceLink(
 }
 
 export function getFileByPath(app: App, path: string, sourcePath: string, encoded = true) {
-	path = path.split("#", 1)[0];
-	if (encoded) path = safeDecodeURIComponent(path);
+	const linkPath = path.split(/[?#]/, 1)[0];
+	const lookupPath = encoded ? safeDecodeURIComponent(linkPath) : linkPath;
 	// https://forum.obsidian.md/t/how-to-get-full-paths-from-link-text
-	return app.metadataCache.getFirstLinkpathDest(path, sourcePath);
+	const file = app.metadataCache.getFirstLinkpathDest(lookupPath, sourcePath);
+	if (file != null) return file;
+
+	try {
+		const normalizedPath = normalizeAttachmentPath(linkPath, sourcePath).slice(1);
+		return app.vault.getFileByPath(normalizedPath);
+	} catch {
+		return null;
+	}
 }
 
 // get link currently selected

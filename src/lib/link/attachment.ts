@@ -73,9 +73,13 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			);
 		}
 
-		const file = getFileByPath(this.plugin.app, this.data.path, this.sourcePath, this.data.syntax !== "wiki");
-		return findUploadRule(this.session.settings.uploadRules,
-			file?.name ?? this.data.path, file == null && this.data.syntax !== "wiki") != null;
+		if (!this.session.settings.enableLocalLinkUpload) return false;
+		const file = this.getLocalFile();
+		return file != null && findUploadRule(
+			this.session.settings.uploadRules,
+			file.name,
+			false,
+		) != null;
 	}
 
 	downloadable(): boolean {
@@ -105,12 +109,23 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			);
 		}
 
-		this.tFile = getFileByPath(this.plugin.app, this.data.path, this.sourcePath, this.data.syntax !== "wiki");
+		this.tFile = this.getLocalFile();
 		if (this.tFile == null) {
 			throw new Error(`File not found: '${this.data.path}'`);
 		}
 
 		return this.tFile;
+	}
+
+	private getLocalFile(): TFile | null {
+		if (this.data instanceof File) return null;
+		if (this.tFile != null) return this.tFile;
+		return getFileByPath(
+			this.plugin.app,
+			this.data.path,
+			this.sourcePath,
+			this.data.syntax !== "wiki",
+		);
 	}
 
 	async upload(note: TFile) {
