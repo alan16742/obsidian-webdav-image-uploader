@@ -1,10 +1,4 @@
-import {
-	MarkdownView,
-	Notice,
-	moment,
-	type App,
-	type Editor,
-} from "obsidian";
+import { MarkdownView, Notice, moment, type App, type Editor } from "obsidian";
 export { getFileType } from "../lib/attachment/fileTypes";
 export type { FileType } from "../lib/attachment/fileTypes";
 import {
@@ -16,8 +10,14 @@ import { matchLinks, type LinkInfo } from "../lib/note/noteLinks";
 export { matchLinks } from "../lib/note/noteLinks";
 export type { LinkInfo } from "../lib/note/noteLinks";
 
-export async function reportTask(task: () => void | Promise<void>): Promise<void> {
-	try { await task(); } catch (error) { noticeError(String(error)); }
+export async function reportTask(
+	task: () => void | Promise<void>,
+): Promise<void> {
+	try {
+		await task();
+	} catch (error) {
+		noticeError(String(error));
+	}
 }
 export interface NoteInfo {
 	basename: string;
@@ -33,7 +33,8 @@ export function getFormatVariables(
 	attachmentFolder = "",
 ) {
 	const dotIndex = file.name.lastIndexOf(".");
-	const fileName = dotIndex > 0 ? file.name.substring(0, dotIndex) : file.name;
+	const fileName =
+		dotIndex > 0 ? file.name.substring(0, dotIndex) : file.name;
 	const fileExtension =
 		dotIndex > 0 && dotIndex < file.name.length - 1
 			? file.name.substring(dotIndex + 1)
@@ -68,7 +69,9 @@ export function replaceLink(
 ) {
 	const line = editor.getLine(lineNumber);
 	if (line.slice(link.start, link.end) !== link.raw) {
-		throw new Error("The note changed. The original link was not replaced.");
+		throw new Error(
+			"The note changed. The original link was not replaced.",
+		);
 	}
 	const newLine =
 		line.substring(0, link.start) +
@@ -77,7 +80,12 @@ export function replaceLink(
 	editor.setLine(lineNumber, newLine);
 }
 
-export function getFileByPath(app: App, path: string, sourcePath: string, encoded = true) {
+export function getFileByPath(
+	app: App,
+	path: string,
+	sourcePath: string,
+	encoded = true,
+) {
 	const linkPath = path.split(/[?#]/, 1)[0];
 	const lookupPath = encoded ? safeDecodeURIComponent(linkPath) : linkPath;
 	// https://forum.obsidian.md/t/how-to-get-full-paths-from-link-text
@@ -85,7 +93,11 @@ export function getFileByPath(app: App, path: string, sourcePath: string, encode
 	if (file != null) return file;
 
 	try {
-		const normalizedPath = normalizeAttachmentPath(linkPath, sourcePath).slice(1);
+		const normalizedPath = normalizeAttachmentPath(
+			linkPath,
+			sourcePath,
+			encoded,
+		).slice(1);
 		return app.vault.getFileByPath(normalizedPath);
 	} catch {
 		return null;

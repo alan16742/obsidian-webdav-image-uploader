@@ -3,6 +3,9 @@ import type WebDavImageUploaderPlugin from "../../main";
 import { getFormatVariables } from "../../utils";
 import {
 	buildUploadTarget,
+	DEFAULT_LOGICAL_PATH,
+	DEFAULT_REMOTE_PATH,
+	DEFAULT_PREVIEW_URL,
 	getLocalLinkTarget,
 	normalizeExtension,
 	normalizeUploadRule,
@@ -20,6 +23,7 @@ interface UploadRuleCard {
 	previewEl: HTMLSpanElement;
 	upButton: HTMLButtonElement;
 	downButton: HTMLButtonElement;
+	refreshSummary(): void;
 }
 
 export class UploadRuleSettingRenderer {
@@ -31,7 +35,7 @@ export class UploadRuleSettingRenderer {
 		private app: App,
 		private plugin: WebDavImageUploaderPlugin,
 		private saveSettings: () => void,
-	) { }
+	) {}
 
 	renderUploadRules(containerEl: HTMLElement) {
 		if (this.rulesContainerEl !== containerEl) {
@@ -39,6 +43,10 @@ export class UploadRuleSettingRenderer {
 			this.rulesContainerEl = containerEl;
 		}
 		this.refreshUploadRules();
+	}
+
+	refreshSummaries() {
+		for (const card of this.ruleCards.values()) card.refreshSummary();
 	}
 
 	private refreshUploadRules(focusRule?: UploadRule) {
@@ -74,8 +82,9 @@ export class UploadRuleSettingRenderer {
 		});
 
 		if (focusRule != null) {
-			this.ruleCards.get(focusRule)?.cardEl
-				.querySelector<HTMLElement>("summary")
+			this.ruleCards
+				.get(focusRule)
+				?.cardEl.querySelector<HTMLElement>("summary")
 				?.focus();
 		}
 	}
@@ -129,37 +138,33 @@ export class UploadRuleSettingRenderer {
 			.setDesc("All configured match conditions must match.")
 			.addButton((button) => {
 				upButton = button.buttonEl;
-				button
-					.setButtonText("Up")
-					.onClick(() => {
-						const rules = getRules();
-						const index = getRuleIndex();
-						if (index <= 0) {
-							return;
-						}
-						[rules[index - 1], rules[index]] = [
-							rules[index],
-							rules[index - 1],
-						];
-						this.saveAndRefresh();
-					});
+				button.setButtonText("Up").onClick(() => {
+					const rules = getRules();
+					const index = getRuleIndex();
+					if (index <= 0) {
+						return;
+					}
+					[rules[index - 1], rules[index]] = [
+						rules[index],
+						rules[index - 1],
+					];
+					this.saveAndRefresh();
+				});
 			})
 			.addButton((button) => {
 				downButton = button.buttonEl;
-				button
-					.setButtonText("Down")
-					.onClick(() => {
-						const rules = getRules();
-						const index = getRuleIndex();
-						if (index < 0 || index >= rules.length - 1) {
-							return;
-						}
-						[rules[index], rules[index + 1]] = [
-							rules[index + 1],
-							rules[index],
-						];
-						this.saveAndRefresh();
-					});
+				button.setButtonText("Down").onClick(() => {
+					const rules = getRules();
+					const index = getRuleIndex();
+					if (index < 0 || index >= rules.length - 1) {
+						return;
+					}
+					[rules[index], rules[index + 1]] = [
+						rules[index + 1],
+						rules[index],
+					];
+					this.saveAndRefresh();
+				});
 			})
 			.addButton((button) =>
 				button.setButtonText("Duplicate").onClick(() => {
@@ -183,8 +188,7 @@ export class UploadRuleSettingRenderer {
 							return;
 						}
 						this.expandedUploadRules.delete(rule);
-						const focusRule =
-							rules[index + 1] ?? rules[index - 1];
+						const focusRule = rules[index + 1] ?? rules[index - 1];
 						rules.splice(index, 1);
 						this.saveAndRefresh(focusRule);
 					}),
@@ -221,74 +225,77 @@ export class UploadRuleSettingRenderer {
 			.setName("Any extension")
 			.setDesc("Ignore file extensions when matching.")
 			.addToggle((toggle) =>
-				toggle.setValue(rule.extensions.length === 0).onChange((value) => {
-					rule.extensions = value ? [] : ["jpg"];
-					this.renderExtensions(
-						extensionsContainerEl,
-						rule,
-						refreshSummary,
-					);
-					refreshSummary();
-					this.saveSettings();
-				}),
-			);
-
-		contentEl.appendChild(extensionsContainerEl);
-		this.renderExtensions(extensionsContainerEl, rule, refreshSummary);
-
-		new Setting(contentEl)
-			.setName("URL prefix")
-			.setDesc("Leave blank to use the main WebDAV URL.")
-			.addText((text) =>
-				text
-					.setPlaceholder("https://img.example.com")
-					.setValue(rule.urlPrefix)
+				toggle
+					.setValue(rule.extensions.length === 0)
 					.onChange((value) => {
-						rule.urlPrefix = value;
+						rule.extensions = value ? [] : ["jpg"];
+						this.renderExtensions(
+							extensionsContainerEl,
+							rule,
+							refreshSummary,
+						);
 						refreshSummary();
 						this.saveSettings();
 					}),
 			);
 
-		let formatInput: HTMLInputElement | null = null;
-		new Setting(contentEl)
-			.setName("Link format")
-			.setDesc(
-				"Start with {{url}} for a standard Markdown URL link. Without it, the result is a local link target using Obsidian's link format setting. Use {{attachment}} for Obsidian's configured attachment folder.",
-			)
-			.addText((text) => {
-				formatInput = text.inputEl;
-				text
-					.setPlaceholder("{{url}}/images/{{nameext}}")
-					.setValue(rule.linkFormat)
-					.onChange((value) => {
-						rule.linkFormat = value;
+		contentEl.appendChild(extensionsContainerEl);
+		this.renderExtensions(extensionsContainerEl, rule, refreshSummary);
+
+		for (const field of [
+			"logicalPath",
+			"remotePath",
+			"previewUrl",
+		] as const) {
+			const defaults = {
+				logicalPath: DEFAULT_LOGICAL_PATH,
+				remotePath: DEFAULT_REMOTE_PATH,
+				previewUrl: DEFAULT_PREVIEW_URL,
+			};
+			const descriptions = {
+				logicalPath:
+					"Vault destination for downloads and, when Use logical attachment links is enabled, note links. Existing local uploads keep their current vault path.",
+				remotePath:
+					"Actual WebDAV storage path. Use {{logicalPath}} to keep the logical path, or choose a different directory.",
+				previewUrl:
+					"Final preview URL, also inserted in notes when Use logical attachment links is disabled. Use {{url}} for the WebDAV connection URL or enter a public URL template based on {{remotePath}}.",
+			};
+			let formatInput: HTMLInputElement | null = null;
+			new Setting(contentEl)
+				.setName(field)
+				.setDesc(descriptions[field])
+				.addText((text) => {
+					formatInput = text.inputEl;
+					text.setPlaceholder(defaults[field])
+						.setValue(rule[field])
+						.onChange((value) => {
+							rule[field] = value;
+							refreshSummary();
+							this.saveSettings();
+						});
+				})
+				.addDropdown((dropdown) => {
+					dropdown.addOption("", "Insert variable…");
+					for (const variable of TEMPLATE_VARIABLE_NAMES) {
+						dropdown.addOption(variable, `{{${variable}}}`);
+					}
+					dropdown.onChange((variable) => {
+						if (!variable || formatInput == null) return;
+						formatInput.setRangeText(
+							`{{${variable}}}`,
+							formatInput.selectionStart ??
+								formatInput.value.length,
+							formatInput.selectionEnd ??
+								formatInput.value.length,
+							"end",
+						);
+						rule[field] = formatInput.value;
 						refreshSummary();
 						this.saveSettings();
+						dropdown.setValue("");
 					});
-			})
-			.addDropdown((dropdown) => {
-				dropdown.addOption("", "Insert variable…");
-				for (const variable of TEMPLATE_VARIABLE_NAMES) {
-					dropdown.addOption(variable, `{{${variable}}}`);
-				}
-				dropdown.onChange((variable) => {
-					if (variable === "" || formatInput == null) {
-						return;
-					}
-					const token = `{{${variable}}}`;
-					formatInput.setRangeText(
-						token,
-						formatInput.selectionStart ?? formatInput.value.length,
-						formatInput.selectionEnd ?? formatInput.value.length,
-						"end",
-					);
-					rule.linkFormat = formatInput.value;
-					refreshSummary();
-					this.saveSettings();
-					dropdown.setValue("");
 				});
-			});
+		}
 
 		return {
 			cardEl,
@@ -296,6 +303,7 @@ export class UploadRuleSettingRenderer {
 			previewEl,
 			upButton: upButton!,
 			downButton: downButton!,
+			refreshSummary,
 		};
 	}
 
@@ -328,7 +336,10 @@ export class UploadRuleSettingRenderer {
 				const tag = tagsEl.createEl("button", {
 					cls: "webdav-upload-rule-tag",
 					text: `${extension} ×`,
-					attr: { type: "button", "aria-label": `Remove ${extension}` },
+					attr: {
+						type: "button",
+						"aria-label": `Remove ${extension}`,
+					},
 				});
 				if (extension === focusExtension) {
 					tag.focus();
@@ -376,10 +387,12 @@ export class UploadRuleSettingRenderer {
 				addExtensions();
 			}
 		});
-		addEl.createEl("button", {
-			text: "Add",
-			attr: { type: "button" },
-		}).addEventListener("click", addExtensions);
+		addEl
+			.createEl("button", {
+				text: "Add",
+				attr: { type: "button" },
+			})
+			.addEventListener("click", addExtensions);
 	}
 
 	private async getUploadRuleSummary(rule: UploadRule): Promise<string> {
@@ -415,18 +428,16 @@ export class UploadRuleSettingRenderer {
 				this.plugin.settings.url,
 				variables,
 			);
-			const previewTarget = target.linkType === "local"
+			const previewTarget = this.plugin.settings.useLogicalLinks
 				? getLocalLinkTarget(
-					target.linkTarget,
-					sourcePath,
-					getNewLinkFormat(this.app),
-				)
-				: target.linkTarget;
+						target.logicalPath,
+						sourcePath,
+						getNewLinkFormat(this.app),
+					)
+				: target.previewUrl;
 			return `${conditions.join(" · ")} → ${previewTarget}`;
 		} catch {
-			const hasUrl =
-				rule.urlPrefix.trim() !== "" ||
-				this.plugin.settings.url.trim() !== "";
+			const hasUrl = this.plugin.settings.url.trim() !== "";
 			const prompt = hasUrl
 				? "Fix URL or upload rule to preview"
 				: "Configure WebDAV URL to preview";

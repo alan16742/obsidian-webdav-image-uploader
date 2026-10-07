@@ -1,5 +1,6 @@
 import type { WebDavClient } from ".";
-import { getFragment, stripFragment } from "../attachment/attachmentPaths";
+import { stripFragment } from "../attachment/attachmentPaths";
+import type { AttachmentMapping } from "../attachment/uploadRules";
 
 // Grace period before revoking an unreferenced blob URL. CodeMirror
 // virtualization removes and re-adds embeds while scrolling; the delay lets a
@@ -27,14 +28,17 @@ export class WebDavBlobStore {
 	private readonly entries = new Map<string, BlobEntry>();
 	private destroyed = false;
 
-	constructor(private readonly client: WebDavClient) { }
+	constructor(private readonly client: WebDavClient) {}
 
-	async acquire(sourceUrl: string): Promise<BlobHandle> {
+	async acquire(
+		mapping: AttachmentMapping,
+		fragment = "",
+	): Promise<BlobHandle> {
 		if (this.destroyed) {
 			throw new Error("WebDAV blob store has been destroyed");
 		}
 
-		const key = stripFragment(sourceUrl);
+		const key = this.client.cacheKey(mapping.remotePath);
 		let entry = this.entries.get(key);
 		if (entry == null) {
 			entry = { refCount: 0 };
@@ -47,11 +51,11 @@ export class WebDavBlobStore {
 		try {
 			const objectUrl =
 				entry.objectUrl ??
-				(await this.getOrCreateObjectUrl(key, sourceUrl, entry));
+				(await this.getOrCreateObjectUrl(key, mapping, entry));
 			let released = false;
 
 			return {
-				src: objectUrl + getFragment(sourceUrl),
+				src: objectUrl + fragment,
 				release: () => {
 					if (released) return;
 					released = true;
@@ -62,6 +66,15 @@ export class WebDavBlobStore {
 			this.releaseEntry(key, entry);
 			throw error;
 		}
+	}
+
+	invalidate(remotePath: string) {
+		const key = this.client.cacheKey(remotePath);
+		const entry = this.entries.get(key);
+		if (entry == null) return;
+		this.cancelRevoke(entry);
+		if (entry.objectUrl != null) URL.revokeObjectURL(entry.objectUrl);
+		this.entries.delete(key);
 	}
 
 	destroy() {
@@ -79,7 +92,7 @@ export class WebDavBlobStore {
 
 	private async getOrCreateObjectUrl(
 		key: string,
-		sourceUrl: string,
+		mapping: AttachmentMapping,
 		entry: BlobEntry,
 	): Promise<string> {
 		if (entry.pending != null) {
@@ -87,13 +100,14 @@ export class WebDavBlobStore {
 		}
 
 		const pending = (async () => {
-			const resource = await this.client.getResource(sourceUrl);
+			const resource = await this.client.getResource(mapping.remotePath);
 			if (this.destroyed || this.entries.get(key) !== entry) {
 				throw new Error("WebDAV blob request was cancelled");
 			}
 
-			const type = normalizeMimeType(resource.contentType) ??
-				inferMimeType(sourceUrl);
+			const type =
+				normalizeMimeType(resource.contentType) ??
+				inferMimeType(mapping.logicalPath);
 			const blob = new Blob(
 				[resource.data],
 				type == null ? undefined : { type },
@@ -124,6 +138,7 @@ export class WebDavBlobStore {
 
 	private releaseEntry(key: string, entry: BlobEntry) {
 		entry.refCount = Math.max(0, entry.refCount - 1);
+		if (this.entries.get(key) !== entry) return;
 		if (entry.refCount !== 0) return;
 
 		if (entry.objectUrl != null) {
@@ -134,7 +149,12 @@ export class WebDavBlobStore {
 	}
 
 	private scheduleRevoke(key: string, entry: BlobEntry) {
-		if (entry.revokeTimer != null || this.destroyed) return;
+		if (
+			entry.revokeTimer != null ||
+			this.destroyed ||
+			this.entries.get(key) !== entry
+		)
+			return;
 
 		entry.revokeTimer = window.setTimeout(() => {
 			entry.revokeTimer = undefined;

@@ -1,9 +1,11 @@
 import { Modal, Notice, Setting, type App } from "obsidian";
 
-export async function getRenamePath(app: App, path: string) {
+export async function getRenamePath(app: App, path: string, logical = true) {
 	return new Promise<string | null>((resolve) => {
 		const modal = new RenameModal(app, {
-			title: "Rename File on WebDAV",
+			title: logical
+				? "Rename attachment logical path"
+				: "Rename file on WebDAV",
 			path: path,
 			onConfirm: (newPath: string) => resolve(newPath),
 			onCancel: () => resolve(null),
@@ -59,7 +61,8 @@ export class RenameModal extends Modal {
 					.setButtonText("Confirm")
 					.setCta()
 					.onClick(async () => {
-						if (this.submitting || this.submitted || this.closed) return;
+						if (this.submitting || this.submitted || this.closed)
+							return;
 						const newPath = inputEl.value.trim();
 						if (newPath.length === 0) {
 							new Notice("New path is empty.");
@@ -76,8 +79,11 @@ export class RenameModal extends Modal {
 							await onConfirm(newPath);
 							this.submitted = true;
 							this.close();
-						} catch (error) { new Notice(String(error)); }
-						finally { this.submitting = false; }
+						} catch (error) {
+							new Notice(String(error));
+						} finally {
+							this.submitting = false;
+						}
 					}),
 			);
 	}

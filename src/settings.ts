@@ -13,7 +13,9 @@ import {
 	isRecord,
 	createDefaultUploadRule,
 	sanitizeUploadRules,
+	sanitizePathMappings,
 	TEMPLATE_VARIABLE_NAMES,
+	type AttachmentMapping,
 	type UploadRule,
 } from "./lib/attachment/uploadRules";
 import { UploadRuleSettingRenderer } from "./view/settings/uploadRuleSettings";
@@ -29,10 +31,11 @@ export interface WebDavImageUploaderSettings {
 
 	// Upload
 	enableUpload: boolean;
-	enableLocalLinkUpload: boolean;
+	useLogicalLinks: boolean;
 	uploadedFileOperation: "default" | "delete" | "none";
 	enableDummyPdf?: boolean;
 	uploadRules: UploadRule[];
+	pathMappings: AttachmentMapping[];
 
 	// Batch processes
 	createBatchLog: boolean;
@@ -45,34 +48,32 @@ export const DEFAULT_SETTINGS: WebDavImageUploaderSettings = {
 	disableBasicAuth: false,
 
 	enableUpload: true,
-	enableLocalLinkUpload: false,
+	useLogicalLinks: false,
 	uploadedFileOperation: "delete",
 	enableDummyPdf: false,
 	uploadRules: [
 		{
 			prefix: "",
 			suffix: "",
-			extensions: [
-				"jpg",
-				"jpeg",
-				"png",
-				"gif",
-				"svg",
-				"webp",
-			],
-			urlPrefix: "",
-			linkFormat: "{{url}}/{{nameext}}",
+			extensions: ["jpg", "jpeg", "png", "gif", "svg", "webp"],
+			logicalPath: "{{attachment}}/{{nameext}}",
+			remotePath: "{{logicalPath}}",
+			previewUrl: "{{url}}/{{remotePath}}",
 		},
 	],
+	pathMappings: [],
 
 	createBatchLog: true,
 };
 
 export function sanitizeSettings(data: unknown): WebDavImageUploaderSettings {
-	const source = isRecord(data) ? data : DEFAULT_SETTINGS;
+	const source: Record<string, unknown> = isRecord(data)
+		? data
+		: { ...DEFAULT_SETTINGS };
 	const settings: WebDavImageUploaderSettings = {
 		...DEFAULT_SETTINGS,
 		uploadRules: sanitizeUploadRules(source),
+		pathMappings: sanitizePathMappings(source.pathMappings),
 	};
 
 	for (const key of ["url", "username", "password"] as const) {
@@ -85,7 +86,7 @@ export function sanitizeSettings(data: unknown): WebDavImageUploaderSettings {
 	for (const key of [
 		"disableBasicAuth",
 		"enableUpload",
-		"enableLocalLinkUpload",
+		"useLogicalLinks",
 		"enableDummyPdf",
 		"createBatchLog",
 	] as const) {
@@ -119,7 +120,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 
 		this.saveSettings = debounce(
 			() => reportTask(() => this.plugin.saveSettings()),
-			200
+			200,
 		);
 		this.uploadRuleSettingRenderer = new UploadRuleSettingRenderer(
 			this.app,
@@ -146,7 +147,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 
 		new Setting(containerEl)
-			.setName("Url")
+			.setName("WebDAV connection URL")
 			.setDesc("The URL of the WebDAV server.")
 			.addText((text) =>
 				text
@@ -159,7 +160,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 						}
 						this.plugin.settings.url = value;
 						this.saveSettings();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -171,7 +172,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					.onChange((value) => {
 						this.plugin.settings.username = value;
 						this.saveSettings();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -183,7 +184,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					(value) => {
 						this.plugin.settings.password = value;
 						this.saveSettings();
-					}
+					},
 				);
 			});
 
@@ -191,8 +192,8 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 			.setName("Disable basic auth")
 			.setDesc(
 				"By default, protected WebDAV images, videos, and audio files are loaded through authenticated blob URLs. " +
-				"Disable this when your media URLs are already publicly accessible. " +
-				"Reopen the note to refresh existing previews."
+					"Disable this when your media URLs are already publicly accessible. " +
+					"Reopen the note to refresh existing previews.",
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -200,7 +201,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					.onChange((value) => {
 						this.plugin.settings.disableBasicAuth = value;
 						this.saveSettings();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -215,7 +216,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 						new Notice(error);
 					}
 					button.setDisabled(false);
-				})
+				}),
 			);
 	}
 
@@ -227,7 +228,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Enable upload on drop/paste")
 			.setDesc(
-				"Toggle if auto-upload is enabled. If enabled, files will be uploaded when dropped or pasted."
+				"Toggle if auto-upload is enabled. If enabled, files will be uploaded when dropped or pasted.",
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -235,34 +236,36 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					.onChange((value) => {
 						this.plugin.settings.enableUpload = value;
 						this.saveSettings();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
-			.setName("Upload local files from links")
+			.setName("Use logical attachment links")
 			.setDesc(
-				"Allow existing local files referenced by Markdown links or Wikilinks, such as [](path) and [[path]], to be uploaded."
+				"Enabled: insert logicalPath links using Obsidian's link format and allow uploading files from existing local links. " +
+					"Disabled: insert previewUrl as a Markdown URL link. Downloads save to logicalPath and insert a local link in either mode.",
 			)
 			.addToggle((toggle) =>
 				toggle
-					.setValue(this.plugin.settings.enableLocalLinkUpload)
+					.setValue(this.plugin.settings.useLogicalLinks)
 					.onChange((value) => {
-						this.plugin.settings.enableLocalLinkUpload = value;
+						this.plugin.settings.useLogicalLinks = value;
+						this.uploadRuleSettingRenderer.refreshSummaries();
 						this.saveSettings();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
 			.setName("Uploaded file operation")
 			.setDesc(
-				"What to do with the local file after it is uploaded to WebDAV."
+				"What to do with the local file after it is uploaded to WebDAV.",
 			)
 			.addDropdown((dropdown) =>
 				dropdown
 					.addOption("delete", "Delete permanently")
 					.addOption(
 						"default",
-						"Same as 'Files & Links -> Deleted files'"
+						"Same as 'Files & Links -> Deleted files'",
 					)
 					.addOption("none", "Do nothing")
 					.setValue(this.plugin.settings.uploadedFileOperation)
@@ -270,7 +273,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 						this.plugin.settings.uploadedFileOperation =
 							value as WebDavImageUploaderSettings["uploadedFileOperation"];
 						this.saveSettings();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
@@ -278,7 +281,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 			.setDesc(
 				createFragment((frag) => {
 					frag.createSpan({
-						text: "If enabled, a ",
+						text: "When logical attachment links are enabled, a ",
 					});
 					frag.createEl("a", {
 						href: "https://ryotaushio.github.io/obsidian-pdf-plus/external-pdf-files.html",
@@ -287,7 +290,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					frag.createSpan({
 						text: " will be created when uploading a PDF file. Add 'pdf' to an upload rule to enable PDF uploads.",
 					});
-				})
+				}),
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -295,13 +298,13 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					.onChange((value) => {
 						this.plugin.settings.enableDummyPdf = value;
 						this.saveSettings();
-					})
+					}),
 			);
 
 		new Setting(containerEl)
 			.setName("Upload rules")
 			.setDesc(
-				"Rules are checked from top to bottom. The first matching rule controls the public URL and WebDAV path.",
+				"Rules are checked from top to bottom. The first matching rule maps the logical attachment path to its WebDAV path and preview URL.",
 			)
 			.setHeading();
 
@@ -325,14 +328,19 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 		const variablesEl = containerEl.createEl("details", {
 			cls: "webdav-upload-rule-variables",
 		});
-		variablesEl.createEl("summary", { text: "Available link variables" });
+		variablesEl.createEl("summary", {
+			text: "Available template variables",
+		});
 		variablesEl.createEl("p", {
-			text: "Use {{var}} for values and {{dateVar:format}} for Moment.js date formatting.",
+			text: "All three templates use the same variables. References are resolved by dependency. Use {{var}} for values and {{dateVar:format}} for Moment.js date formatting.",
 		});
 		const variableList = variablesEl.createEl("ul");
 		const descriptions: Record<string, string> = {
-			url: "the rule URL prefix, or the main WebDAV URL when blank",
-			attachment: "Obsidian's configured attachment folder for the current note",
+			url: "the WebDAV connection URL",
+			logicalPath: "the resolved vault attachment path",
+			remotePath: "the resolved WebDAV storage path",
+			attachment:
+				"Obsidian's configured attachment folder for the current note",
 			name: "file basename",
 			ext: "file extension without the dot",
 			nameext: "file name with extension",
@@ -357,7 +365,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName("Create batch operation log")
 			.setDesc(
-				"Toggle if a log file should be created after batch upload/download."
+				"Toggle if a log file should be created after batch upload/download.",
 			)
 			.addToggle((toggle) =>
 				toggle
@@ -365,7 +373,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					.onChange((value) => {
 						this.plugin.settings.createBatchLog = value;
 						this.saveSettings();
-					})
+					}),
 			);
 	}
 
@@ -383,15 +391,15 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 					frag.createSpan({
 						cls: "mod-warning",
 						text: "The following operations may break your vault. Please make sure to back up your vault before proceeding.",
-					})
-				)
+					}),
+				),
 			)
 			.addButton((button) =>
 				button.setButtonText("I understand").onClick(() => {
 					warning.clear();
 					uploadVaultSetting!.setDisabled(false);
 					downloadVaultSetting!.setDisabled(false);
-				})
+				}),
 			);
 
 		uploadVaultSetting = new Setting(containerEl)
@@ -407,7 +415,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 							await uploader.uploadVaultFiles();
 							await uploader.createLog();
 						});
-					})
+					}),
 			);
 
 		downloadVaultSetting = new Setting(containerEl)
@@ -423,7 +431,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 							await downloader.downloadVaultFiles();
 							await downloader.createLog();
 						});
-					})
+					}),
 			);
 	}
 }

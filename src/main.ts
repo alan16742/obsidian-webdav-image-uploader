@@ -25,7 +25,11 @@ import {
 } from "./settings";
 import { BatchDownloader, BatchUploader } from "./lib/batch";
 import { ConfirmModal } from "./view/modals/confirmModal";
-import { findUploadRule, isManagedUrl } from "./lib/attachment/uploadRules";
+import {
+	findUploadRule,
+	isManagedUrl,
+	type AttachmentMapping,
+} from "./lib/attachment/uploadRules";
 import { EditorActions } from "./lib/note/editorActions";
 
 export default class WebDavImageUploaderPlugin extends Plugin {
@@ -33,6 +37,7 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 	client!: WebDavClient;
 	mediaLoader!: WebDavMediaLoader;
 	private editorActions!: EditorActions;
+	private settingsWrite: Promise<void> = Promise.resolve();
 
 	async onload() {
 		await this.loadSettings();
@@ -51,7 +56,9 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 		this.addCommand({
 			id: "toggle-auto-upload",
 			name: "Toggle auto upload",
-			callback: () => { void reportTask(() => this.toggleAutoUpload()); },
+			callback: () => {
+				void reportTask(() => this.toggleAutoUpload());
+			},
 		});
 
 		// upload file when pasted or dropped
@@ -128,20 +135,53 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 	}
 
 	async saveSettings() {
-		await this.saveData(sanitizeSettings(this.settings));
+		await this.persistSettings();
 		this.client.initClient();
+	}
+
+	private persistSettings(): Promise<void> {
+		const write = this.settingsWrite.then(() =>
+			this.saveData(sanitizeSettings(this.settings)),
+		);
+		this.settingsWrite = write.catch(() => undefined);
+		return write;
+	}
+
+	async rememberPathMapping(
+		mapping: AttachmentMapping,
+		previousLogicalPath?: string,
+	) {
+		this.settings.pathMappings = this.settings.pathMappings.filter(
+			(item) =>
+				item.logicalPath !== mapping.logicalPath &&
+				item.logicalPath !== previousLogicalPath,
+		);
+		this.settings.pathMappings.push({ ...mapping });
+		await this.persistSettings();
+	}
+
+	async forgetPathMapping(logicalPath: string) {
+		this.settings.pathMappings = this.settings.pathMappings.filter(
+			(item) => item.logicalPath !== logicalPath,
+		);
+		await this.persistSettings();
 	}
 
 	async toggleAutoUpload() {
 		this.settings.enableUpload = !this.settings.enableUpload;
 		await this.saveSettings();
 		new Notice(
-			`Auto upload is ${this.settings.enableUpload ? "enabled" : "disabled"
+			`Auto upload is ${
+				this.settings.enableUpload ? "enabled" : "disabled"
 			}.`,
 		);
 	}
 
-	onUploadFile(event: ClipboardEvent | DragEvent, editor: Editor, info?: MarkdownFileInfo) {
+	onUploadFile(
+		event: ClipboardEvent | DragEvent,
+		editor: Editor,
+		info?: MarkdownFileInfo,
+	) {
 		return this.editorActions.pasteOrDrop(event, editor, info);
 	}
 
@@ -228,7 +268,12 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 	}
 
 	isWebdavUrl(url: string) {
-		return isManagedUrl(url, this.settings.url, this.settings.uploadRules);
+		return isManagedUrl(
+			url,
+			this.settings.url,
+			this.settings.uploadRules,
+			this.settings.pathMappings,
+		);
 	}
 
 	isExcludeFile(path: string) {

@@ -16,16 +16,13 @@ export async function getAttachmentFolderPath(
 	sourcePath: string,
 	newFilePath: string,
 ): Promise<string> {
-	const attachmentPath =
-		await app.fileManager.getAvailablePathForAttachment(
-			newFilePath,
-			sourcePath,
-		);
+	const attachmentPath = await app.fileManager.getAvailablePathForAttachment(
+		newFilePath,
+		sourcePath,
+	);
 	const normalizedPath = normalizeVaultPath(attachmentPath);
 	const slashIndex = normalizedPath.lastIndexOf("/");
-	return slashIndex === -1
-		? ""
-		: normalizedPath.substring(0, slashIndex);
+	return slashIndex === -1 ? "" : normalizedPath.substring(0, slashIndex);
 }
 
 /**
@@ -59,9 +56,8 @@ export function getAvailableVaultPath(app: App, requestedPath: string): string {
 	}
 
 	const slashIndex = normalizedPath.lastIndexOf("/");
-	const parentPath = slashIndex === -1
-		? ""
-		: normalizedPath.substring(0, slashIndex);
+	const parentPath =
+		slashIndex === -1 ? "" : normalizedPath.substring(0, slashIndex);
 	const fileName = normalizedPath.substring(slashIndex + 1);
 	const dotIndex = fileName.lastIndexOf(".");
 	const stem = dotIndex > 0 ? fileName.substring(0, dotIndex) : fileName;
@@ -69,9 +65,10 @@ export function getAvailableVaultPath(app: App, requestedPath: string): string {
 
 	for (let index = 1; ; index++) {
 		const candidateName = `${stem} ${index}${extension}`;
-		const candidatePath = parentPath === ""
-			? candidateName
-			: `${parentPath}/${candidateName}`;
+		const candidatePath =
+			parentPath === ""
+				? candidateName
+				: `${parentPath}/${candidateName}`;
 		if (app.vault.getAbstractFileByPath(candidatePath) == null) {
 			return candidatePath;
 		}
@@ -90,12 +87,13 @@ export async function ensureVaultParentFolder(
 	const segments = normalizedPath.substring(0, slashIndex).split("/");
 	let currentPath = "";
 	for (const segment of segments) {
-		currentPath = currentPath === ""
-			? segment
-			: `${currentPath}/${segment}`;
+		currentPath =
+			currentPath === "" ? segment : `${currentPath}/${segment}`;
 		if (app.vault.getFolderByPath(currentPath) != null) continue;
 		if (app.vault.getAbstractFileByPath(currentPath) != null) {
-			throw new Error(`Attachment parent is not a folder: '${currentPath}'.`);
+			throw new Error(
+				`Attachment parent is not a folder: '${currentPath}'.`,
+			);
 		}
 		await app.vault.createFolder(currentPath);
 	}

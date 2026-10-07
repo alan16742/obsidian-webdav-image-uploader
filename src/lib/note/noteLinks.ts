@@ -44,8 +44,10 @@ function destination(text: string, start: number) {
 }
 
 function scanLink(text: string, open: number): LinkInfo | null {
-	const start = open > 0 && text[open - 1] === "!" && !escaped(text, open - 1)
-		? open - 1 : open;
+	const start =
+		open > 0 && text[open - 1] === "!" && !escaped(text, open - 1)
+			? open - 1
+			: open;
 	let close: number;
 	let pathStart: number;
 	let pathEnd: number;
@@ -70,8 +72,11 @@ function scanLink(text: string, open: number): LinkInfo | null {
 		}
 		if (depth !== 0) return null;
 		name = text.slice(open + 1, labelEnd);
-		const definition = text[labelEnd + 1] === ":" &&
-			/^ {0,3}$/.test(text.slice(text.lastIndexOf("\n", open - 1) + 1, open));
+		const definition =
+			text[labelEnd + 1] === ":" &&
+			/^ {0,3}$/.test(
+				text.slice(text.lastIndexOf("\n", open - 1) + 1, open),
+			);
 		if (!definition && text[labelEnd + 1] !== "(") return null;
 		let cursor = labelEnd + 2;
 		while (/[ \t]/.test(text[cursor] ?? "\n")) cursor++;
@@ -84,13 +89,22 @@ function scanLink(text: string, open: number): LinkInfo | null {
 		if (cursor > target.next && ['"', "'", "("].includes(text[cursor])) {
 			const closing = text[cursor] === "(" ? ")" : text[cursor];
 			cursor++;
-			while (cursor < text.length && (text[cursor] !== closing || escaped(text, cursor))) cursor++;
+			while (
+				cursor < text.length &&
+				(text[cursor] !== closing || escaped(text, cursor))
+			)
+				cursor++;
 			if (cursor === text.length) return null;
 			cursor++;
 			while (/[ \t]/.test(text[cursor] ?? "\n")) cursor++;
 		}
 		if (definition) {
-			if (cursor < text.length && text[cursor] !== "\n" && text[cursor] !== "\r") return null;
+			if (
+				cursor < text.length &&
+				text[cursor] !== "\n" &&
+				text[cursor] !== "\r"
+			)
+				return null;
 			close = cursor;
 			syntax = "definition";
 		} else {
@@ -101,7 +115,10 @@ function scanLink(text: string, open: number): LinkInfo | null {
 	}
 	if (pathEnd === pathStart) return null;
 	return {
-		start, end: close, name, syntax,
+		start,
+		end: close,
+		name,
+		syntax,
 		path: text.slice(pathStart, pathEnd).replace(/\\([\\()[\]<> ])/g, "$1"),
 		raw: text.slice(start, close),
 		targetStart: pathStart - start,
@@ -120,8 +137,13 @@ export function matchLinks(content: string): LinkInfo[] {
 			const line = content.slice(i, lineEnd);
 			const marker = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line);
 			if (fence != null) {
-				if (marker != null && marker[1][0] === fence.char &&
-					marker[1].length >= fence.length && marker[2].trim() === "") fence = undefined;
+				if (
+					marker != null &&
+					marker[1][0] === fence.char &&
+					marker[1].length >= fence.length &&
+					marker[2].trim() === ""
+				)
+					fence = undefined;
 				i = lineEnd;
 				continue;
 			}
@@ -146,7 +168,8 @@ export function matchLinks(content: string): LinkInfo[] {
 			while (content[i + length] === "`") length++;
 			let end = i + length;
 			while ((end = content.indexOf("`".repeat(length), end)) >= 0) {
-				if (content[end - 1] !== "`" && content[end + length] !== "`") break;
+				if (content[end - 1] !== "`" && content[end + length] !== "`")
+					break;
 				end += length;
 			}
 			i = end < 0 ? i + length - 1 : end + length - 1;
@@ -165,21 +188,37 @@ export function replaceLinkTarget(link: LinkInfo, target: string): string {
 	if (link.targetStart == null || link.targetEnd == null) {
 		throw new Error("Link has no verified target range.");
 	}
-	return link.raw.slice(0, link.targetStart) + target + link.raw.slice(link.targetEnd);
+	return (
+		link.raw.slice(0, link.targetStart) +
+		target +
+		link.raw.slice(link.targetEnd)
+	);
 }
 
 /** Preserve aliases, image sizes, titles and reference definitions where possible. */
-export function formatLinkReplacement(original: LinkInfo, generated: string): string {
+export function formatLinkReplacement(
+	original: LinkInfo,
+	generated: string,
+): string {
 	const replacement = matchLinks(generated)[0];
 	if (replacement == null) throw new Error("Generated link is invalid.");
-	let target = replacement.raw.slice(replacement.targetStart, replacement.targetEnd);
+	let target = replacement.raw.slice(
+		replacement.targetStart,
+		replacement.targetEnd,
+	);
 	const fragmentIndex = original.path.indexOf("#");
-	if (fragmentIndex >= 0 && !target.includes("#")) target += original.path.slice(fragmentIndex);
-	if (original.syntax === "definition" || original.syntax === replacement.syntax) {
+	if (fragmentIndex >= 0 && !target.includes("#"))
+		target += original.path.slice(fragmentIndex);
+	if (
+		original.syntax === "definition" ||
+		original.syntax === replacement.syntax
+	) {
 		return replaceLinkTarget(original, target);
 	}
 	const updated = replaceLinkTarget(replacement, target);
 	return original.raw.startsWith("!")
-		? (updated.startsWith("!") ? updated : "!" + updated)
+		? updated.startsWith("!")
+			? updated
+			: "!" + updated
 		: updated.replace(/^!/, "");
 }

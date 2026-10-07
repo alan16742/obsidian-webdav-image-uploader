@@ -24,7 +24,6 @@ export const videoMediaAdapter: MediaAdapter = {
 		getSourceElement(element).src = source;
 		getVideo(element).load();
 	},
-
 };
 
 function getSourceElement(
@@ -36,5 +35,5 @@ function getSourceElement(
 function getVideo(element: Element): HTMLVideoElement {
 	return element.tagName === "VIDEO"
 		? (element as HTMLVideoElement)
-		: element.parentElement as HTMLVideoElement;
+		: (element.parentElement as HTMLVideoElement);
 }

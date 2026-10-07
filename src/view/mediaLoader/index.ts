@@ -6,26 +6,15 @@ import {
 import { MarkdownRenderChild, MarkdownView } from "obsidian";
 import type WebDavImageUploaderPlugin from "../../main";
 import { WebDavBlobStore } from "../../lib/webdavClient/webdavBlobStore";
-import {
-	buildManagedUrl,
-	findUploadRule,
-	getFileNameParts,
-	getEffectiveUrlPrefix,
-	resolveBareUploadPath,
-	normalizeRemotePath,
-} from "../../lib/attachment/uploadRules";
+import type { AttachmentMapping } from "../../lib/attachment/uploadRules";
+import { AttachmentPathResolver } from "../../lib/attachment/pathResolver";
+import { getFileByPath } from "../../utils";
 import {
 	MediaDomBinding,
 	type MediaDomLoader,
 	MISSING_ATTACHMENT_SELECTOR,
 } from "./mediaDomBinding";
-import {
-	getFragment,
-	hasUrlScheme,
-	isBareAttachmentPath,
-	normalizeAttachmentPath,
-} from "../../lib/attachment/attachmentPaths";
-import { getAttachmentFolderPath } from "../../lib/attachment/obsidianPaths";
+import { hasUrlScheme } from "../../lib/attachment/attachmentPaths";
 
 export { imageMediaAdapter } from "./imageLoader";
 export { videoMediaAdapter } from "./videoLoader";
@@ -65,9 +54,8 @@ export class WebDavMediaLoader implements MediaDomLoader {
 		requestMeasure?: () => void,
 	): () => void {
 		if (this.destroyed) return () => undefined;
-		const getSourcePath = typeof sourcePath === "function"
-			? sourcePath
-			: () => sourcePath;
+		const getSourcePath =
+			typeof sourcePath === "function" ? sourcePath : () => sourcePath;
 		const mount = new MediaDomBinding(
 			container,
 			this,
@@ -96,38 +84,29 @@ export class WebDavMediaLoader implements MediaDomLoader {
 	async resolveMissingAttachment(
 		linkPath: string,
 		sourcePath = "",
-	): Promise<string | undefined> {
+	): Promise<AttachmentMapping | undefined> {
 		if (hasUrlScheme(linkPath)) return;
-
-		const rule = findUploadRule(this.plugin.settings.uploadRules, linkPath);
-		if (rule == null) return;
-
-		const urlPrefix = getEffectiveUrlPrefix(
-			rule,
-			this.plugin.settings.url,
-		);
-		let resolvedLinkPath = linkPath;
-		let remotePath: string;
-		if (isBareAttachmentPath(linkPath)) {
-			const fileName = getFileNameParts(linkPath).nameext;
-			const attachmentFolder = await getAttachmentFolderPath(
-				this.plugin.app,
+		if (getFileByPath(this.plugin.app, linkPath, sourcePath) != null)
+			return;
+		return (
+			(await new AttachmentPathResolver(this.plugin).resolve(
+				linkPath,
 				sourcePath,
-				fileName,
-			);
-			resolvedLinkPath = resolveBareUploadPath(
-				rule,
-				fileName,
-				attachmentFolder,
-			) ?? "";
-			remotePath = normalizeRemotePath(resolvedLinkPath);
-		} else {
-			remotePath = normalizeAttachmentPath(resolvedLinkPath, sourcePath);
-		}
-		if (resolvedLinkPath === "") return;
-		if (urlPrefix === "" || remotePath === "/") return;
+			)) ?? undefined
+		);
+	}
 
-		return buildManagedUrl(urlPrefix, remotePath) + getFragment(linkPath);
+	async resolvePreviewMapping(
+		url: string,
+		sourcePath = "",
+	): Promise<AttachmentMapping | undefined> {
+		if (!/^https?:\/\//i.test(url)) return;
+		return (
+			(await new AttachmentPathResolver(this.plugin).resolve(
+				url,
+				sourcePath,
+			)) ?? undefined
+		);
 	}
 
 	getMarkdownSourcePath(container: HTMLElement): string {
@@ -135,18 +114,13 @@ export class WebDavMediaLoader implements MediaDomLoader {
 			.getLeavesOfType("markdown")
 			.find(({ view }) => view.containerEl.contains(container));
 		return leaf?.view instanceof MarkdownView
-			? leaf.view.file?.path ?? ""
-			: this.plugin.app.workspace.getActiveFile()?.path ?? "";
+			? (leaf.view.file?.path ?? "")
+			: (this.plugin.app.workspace.getActiveFile()?.path ?? "");
 	}
 
-	shouldProxy(url: string): boolean {
+	shouldProxy(): boolean {
 		const { disableBasicAuth, username, password } = this.plugin.settings;
-		return (
-			url !== "" &&
-			!disableBasicAuth &&
-			Boolean(username && password) &&
-			this.plugin.isWebdavUrl(url)
-		);
+		return !disableBasicAuth && Boolean(username && password);
 	}
 
 	destroy() {

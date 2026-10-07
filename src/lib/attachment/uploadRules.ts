@@ -1,60 +1,55 @@
-import {
-	normalizeVaultPath,
-	safeDecodeURIComponent,
-} from "./attachmentPaths";
+import { normalizeVaultPath, safeDecodeURIComponent } from "./attachmentPaths";
 import type { NewLinkFormat } from "./obsidianPaths";
+import {
+	TemplateResolver,
+	TEMPLATE_VARIABLE_PATTERN,
+	stringVariable,
+	templateKey,
+	validateTemplate,
+	type TemplateVariables,
+} from "./templates";
+
+export {
+	formatTemplate,
+	stringVariable,
+	TemplateResolver,
+	TEMPLATE_VARIABLE_NAMES,
+	type TemplateDateValue,
+	type TemplateVariable,
+	type TemplateVariables,
+} from "./templates";
 
 export interface UploadRule {
 	prefix: string;
 	suffix: string;
 	extensions: string[];
-	urlPrefix: string;
-	linkFormat: string;
-}
-
-export interface TemplateDateValue {
-	format(pattern: string): string;
-}
-
-export type TemplateVariable =
-	| { type: "string"; value: string }
-	| { type: "date"; value: TemplateDateValue };
-
-export type TemplateVariables = Record<string, TemplateVariable>;
-
-export interface UploadTarget {
-	rule: UploadRule;
-	urlPrefix: string;
+	logicalPath: string;
 	remotePath: string;
-	url: string;
-	linkType: "external" | "local";
-	linkTarget: string;
+	previewUrl: string;
 }
 
-export const TEMPLATE_VARIABLE_NAMES = [
-	"url",
-	"attachment",
-	"name",
-	"ext",
-	"nameext",
-	"mtime",
-	"now",
-	"notename",
-	"notectime",
-	"notemtime",
-] as const;
+/** All paths are literal, vault/DAV-root relative paths, never URLs. */
+export interface AttachmentMapping {
+	logicalPath: string;
+	remotePath: string;
+	previewUrl: string;
+}
 
-const TEMPLATE_VARIABLE_PATTERN = /\{\{\s*(\w+)(?::([^}]+))?\s*\}\}/g;
-const URL_VARIABLE_AT_START_PATTERN = /^\s*\{\{\s*url\s*\}\}/i;
-const URL_VARIABLE_PATTERN = /\{\{\s*url\s*\}\}/i;
+export interface UploadTarget extends AttachmentMapping {
+	rule: UploadRule;
+}
 
+export const DEFAULT_LOGICAL_PATH = "{{attachment}}/{{nameext}}";
+export const DEFAULT_REMOTE_PATH = "{{logicalPath}}";
+export const DEFAULT_PREVIEW_URL = "{{url}}/{{remotePath}}";
 export function createDefaultUploadRule(): UploadRule {
 	return {
 		prefix: "",
 		suffix: "",
 		extensions: ["jpg"],
-		urlPrefix: "",
-		linkFormat: "{{url}}/{{nameext}}",
+		logicalPath: DEFAULT_LOGICAL_PATH,
+		remotePath: DEFAULT_REMOTE_PATH,
+		previewUrl: DEFAULT_PREVIEW_URL,
 	};
 }
 
@@ -69,22 +64,28 @@ export function normalizeUrlPrefix(url: string): string {
 export function normalizeUploadRule(value: unknown): UploadRule {
 	const source = isRecord(value) ? value : {};
 	const extensions = Array.isArray(source.extensions)
-		? source.extensions
-			.filter((extension): extension is string =>
-				typeof extension === "string",
-			)
-			.map(normalizeExtension)
-			.filter((extension, index, values) =>
-				extension !== "" && values.indexOf(extension) === index,
-			)
+		? [
+				...new Set(
+					source.extensions
+						.filter(
+							(extension): extension is string =>
+								typeof extension === "string",
+						)
+						.map(normalizeExtension)
+						.filter(Boolean),
+				),
+			]
 		: [];
-
 	return {
 		prefix: stringValue(source.prefix),
 		suffix: stringValue(source.suffix),
 		extensions,
-		urlPrefix: normalizeUrlPrefix(stringValue(source.urlPrefix)),
-		linkFormat: stringValue(source.linkFormat),
+		logicalPath:
+			stringValue(source.logicalPath).trim() || DEFAULT_LOGICAL_PATH,
+		remotePath:
+			stringValue(source.remotePath).trim() || DEFAULT_REMOTE_PATH,
+		previewUrl:
+			stringValue(source.previewUrl).trim() || DEFAULT_PREVIEW_URL,
 	};
 }
 
@@ -95,15 +96,40 @@ export function sanitizeUploadRules(settingsData: unknown): UploadRule[] {
 		: [createDefaultUploadRule()];
 }
 
+export function sanitizePathMappings(value: unknown): AttachmentMapping[] {
+	if (!Array.isArray(value)) return [];
+	const mappings = new Map<string, AttachmentMapping>();
+	for (const item of value) {
+		if (
+			!isRecord(item) ||
+			typeof item.logicalPath !== "string" ||
+			typeof item.remotePath !== "string" ||
+			typeof item.previewUrl !== "string"
+		)
+			continue;
+		try {
+			const logicalPath = normalizeFilePath(item.logicalPath);
+			const remotePath = normalizeFilePath(item.remotePath);
+			validatePreviewUrl(item.previewUrl);
+			mappings.set(logicalPath, {
+				logicalPath,
+				remotePath,
+				previewUrl: item.previewUrl,
+			});
+		} catch {
+			/* Ignore malformed persisted mappings. */
+		}
+	}
+	return [...mappings.values()];
+}
+
 export function getFileNameParts(filePath: string, isLink = true) {
 	const cleanPath = isLink ? filePath.split(/[?#]/, 1)[0] : filePath;
 	const encodedName = cleanPath.split(/[\\/]/).pop() ?? "";
 	const nameext = isLink ? safeDecodeURIComponent(encodedName) : encodedName;
 	const dotIndex = nameext.lastIndexOf(".");
-	if (dotIndex <= 0 || dotIndex === nameext.length - 1) {
+	if (dotIndex <= 0 || dotIndex === nameext.length - 1)
 		return { name: nameext, extension: "", nameext };
-	}
-
 	return {
 		name: nameext.substring(0, dotIndex),
 		extension: normalizeExtension(nameext.substring(dotIndex + 1)),
@@ -111,18 +137,16 @@ export function getFileNameParts(filePath: string, isLink = true) {
 	};
 }
 
-export function matchesUploadRule(rule: UploadRule, filePath: string, isLink = true): boolean {
-	const normalizedRule = normalizeUploadRule(rule);
+export function matchesUploadRule(
+	rule: UploadRule,
+	filePath: string,
+	isLink = true,
+): boolean {
 	const { name, extension } = getFileNameParts(filePath, isLink);
-	const normalizedName = name.toLowerCase();
-	const prefix = normalizedRule.prefix.toLowerCase();
-	const suffix = normalizedRule.suffix.toLowerCase();
-
 	return (
-		(prefix === "" || normalizedName.startsWith(prefix)) &&
-		(suffix === "" || normalizedName.endsWith(suffix)) &&
-		(normalizedRule.extensions.length === 0 ||
-			normalizedRule.extensions.includes(extension))
+		name.toLowerCase().startsWith(rule.prefix.toLowerCase()) &&
+		name.toLowerCase().endsWith(rule.suffix.toLowerCase()) &&
+		(rule.extensions.length === 0 || rule.extensions.includes(extension))
 	);
 }
 
@@ -131,27 +155,8 @@ export function findUploadRule(
 	filePath: string,
 	isLink = true,
 ): UploadRule | null {
-	return rules.find((rule) => matchesUploadRule(rule, filePath, isLink)) ?? null;
-}
-
-export function formatTemplate(
-	template: string,
-	variables: TemplateVariables,
-): string {
-	return template.replace(
-		TEMPLATE_VARIABLE_PATTERN,
-		(match, key: string, format: string | undefined) => {
-			const value = variables[key.toLowerCase()];
-			if (value == null) {
-				return match;
-			}
-
-			if (value.type === "string") {
-				return value.value;
-			}
-
-			return value.value.format(format?.trim() || "YYYY-MM-DD HH:mm:ss");
-		},
+	return (
+		rules.find((rule) => matchesUploadRule(rule, filePath, isLink)) ?? null
 	);
 }
 
@@ -160,186 +165,110 @@ export function validateUploadRule(
 	webdavUrl: string,
 ): string[] {
 	const errors: string[] = [];
-	const urlPrefix = getEffectiveUrlPrefix(rule, webdavUrl);
-
-	if (urlPrefix === "") {
-		errors.push("Set a URL prefix or configure the main WebDAV URL.");
-	} else {
-		try {
-			const parsedUrl = new URL(urlPrefix);
-			if (!["http:", "https:"].includes(parsedUrl.protocol)) {
-				errors.push("URL prefix must use HTTP or HTTPS.");
-			}
-			if (parsedUrl.search !== "" || parsedUrl.hash !== "") {
-				errors.push("URL prefix cannot contain a query string or fragment.");
-			}
-		} catch {
-			errors.push("URL prefix is not a valid URL.");
+	try {
+		const parsed = new URL(webdavUrl);
+		if (
+			!["http:", "https:"].includes(parsed.protocol) ||
+			parsed.search ||
+			parsed.hash ||
+			parsed.username ||
+			parsed.password
+		) {
+			errors.push(
+				"WebDAV URL must use HTTP or HTTPS without credentials, a query string or fragment.",
+			);
 		}
+	} catch {
+		errors.push("Configure a valid WebDAV connection URL.");
 	}
-
-	if (rule.linkFormat.trim() === "") {
-		errors.push("Link format cannot be empty.");
-	} else if (
-		URL_VARIABLE_PATTERN.test(rule.linkFormat) &&
-		!URL_VARIABLE_AT_START_PATTERN.test(rule.linkFormat)
-	) {
-		errors.push("{{url}} must be at the start of the link format when used.");
+	for (const field of ["logicalPath", "remotePath", "previewUrl"] as const) {
+		if (!rule[field].trim()) errors.push(`${field} cannot be empty.`);
+		errors.push(...validateTemplate(rule[field]));
 	}
-
-	const knownVariables = new Set<string>(TEMPLATE_VARIABLE_NAMES);
-	const unknownVariables = Array.from(rule.linkFormat.matchAll(TEMPLATE_VARIABLE_PATTERN))
-		.map((match) => match[1].toLowerCase())
-		.filter((name, index, names) =>
-			!knownVariables.has(name) && names.indexOf(name) === index,
-		);
-	if (unknownVariables.length > 0) {
-		errors.push(`Unknown variable: ${unknownVariables.join(", ")}.`);
-	}
-
-	return errors;
+	return [...new Set(errors)];
 }
 
+/** Resolve paths from the same variable context, including forward references. */
+export function createRuleTemplateResolver(
+	rule: UploadRule,
+	webdavUrl: string,
+	variables: TemplateVariables,
+	mapping: Partial<
+		Pick<AttachmentMapping, "logicalPath" | "remotePath">
+	> = {},
+): TemplateResolver {
+	const values: TemplateVariables = {
+		...variables,
+		url: stringVariable(normalizeUrlPrefix(webdavUrl)),
+	};
+	for (const field of ["logicalPath", "remotePath"] as const) {
+		const key = field.toLowerCase();
+		const value = values[key];
+		const path =
+			mapping[field] ??
+			(value?.type === "string" ? value.value : undefined);
+		if (path != null) values[key] = stringVariable(normalizeFilePath(path));
+	}
+	return new TemplateResolver(
+		values,
+		{ logicalpath: rule.logicalPath, remotepath: rule.remotePath },
+		normalizeFilePath,
+	);
+}
+
+/** This is the only logical -> DAV -> preview mapping implementation. */
 export function buildUploadTarget(
 	rule: UploadRule,
 	webdavUrl: string,
 	variables: TemplateVariables,
+	existingLogicalPath?: string,
 ): UploadTarget {
 	const normalizedRule = normalizeUploadRule(rule);
 	const errors = validateUploadRule(normalizedRule, webdavUrl);
-	if (errors.length > 0) {
-		throw new Error(errors.join(" "));
-	}
-
-	const urlPrefix = getEffectiveUrlPrefix(normalizedRule, webdavUrl);
-	const renderedTarget = formatTemplate(normalizedRule.linkFormat, {
-		...variables,
-		url: { type: "string", value: urlPrefix },
-	}).trim();
-	const linkType = URL_VARIABLE_AT_START_PATTERN.test(normalizedRule.linkFormat)
-		? "external"
-		: "local";
-	let remotePath: string;
-	if (linkType === "external") {
-		if (!hasUrlPrefix(renderedTarget, urlPrefix)) {
-			throw new Error(
-				"Link format must produce a file path after the URL prefix.",
-			);
-		}
-		remotePath = normalizeRemotePath(renderedTarget.substring(urlPrefix.length));
-	} else {
-		remotePath = normalizeRemotePath(renderedTarget);
-	}
-	if (remotePath === "/") {
-		throw new Error(
-			linkType === "external"
-				? "Link format must produce a file path after the URL prefix."
-				: "Link format must produce a local file path.",
-		);
-	}
-	const url = buildManagedUrl(urlPrefix, remotePath);
-
-	return {
-		rule: normalizedRule,
-		urlPrefix,
-		remotePath,
-		url,
-		linkType,
-		linkTarget: linkType === "external"
-			? url
-			: remotePath.substring(1),
-	};
+	if (errors.length) throw new Error(errors.join(" "));
+	const resolver = createRuleTemplateResolver(
+		normalizedRule,
+		webdavUrl,
+		variables,
+		{ logicalPath: existingLogicalPath },
+	);
+	const logicalPath = resolver.resolve("logicalPath");
+	const remotePath = resolver.resolve("remotePath");
+	const previewUrl = renderPreviewUrl(normalizedRule.previewUrl, resolver);
+	return { rule: normalizedRule, logicalPath, remotePath, previewUrl };
 }
 
-export function formatUploadLink(
-	target: Pick<UploadTarget, "linkType" | "linkTarget">,
-	fileName: string,
-	useMarkdownLinks: boolean,
+export function buildPreviewUrl(
+	template: string,
+	webdavUrl: string,
+	variables: TemplateVariables,
+	mapping: Pick<AttachmentMapping, "logicalPath" | "remotePath">,
 ): string {
-	if (target.linkType === "local" && !useMarkdownLinks && !/[\[\]|#]/.test(target.linkTarget)) {
-		return `[[${target.linkTarget}]]`;
-	}
-
-	const linkTarget = target.linkType === "local"
-		? encodeLocalLinkPath(target.linkTarget)
-		: target.linkTarget;
-	const linkText = fileName.replace(/\\/g, "\\\\").replace(/[\[\]]/g, "\\$&");
-	return `[${linkText}](${linkTarget})`;
+	// Encode values once at the URL boundary, preserving literal query syntax.
+	return renderPreviewUrl(
+		template,
+		new TemplateResolver({
+			...variables,
+			logicalpath: stringVariable(mapping.logicalPath),
+			remotepath: stringVariable(mapping.remotePath),
+			url: stringVariable(normalizeUrlPrefix(webdavUrl)),
+		}),
+	);
 }
 
-export function getLocalLinkTarget(
-	vaultPath: string,
-	sourcePath: string,
-	newLinkFormat: NewLinkFormat,
-): string {
-	const normalizedTarget = normalizeVaultPath(vaultPath);
-	if (newLinkFormat === "absolute") {
-		return "/" + normalizedTarget;
-	}
-	if (newLinkFormat === "shortest") {
-		// Intentional feature: Obsidian's "shortest" link format is basename-only.
-		// Do not change this to the full remote path just because the file is not
-		// currently in the vault. Missing remote attachments reconstruct their
-		// directory from the upload rule in WebDavMediaLoader.
-		return normalizedTarget.substring(normalizedTarget.lastIndexOf("/") + 1);
-	}
-
-	const targetSegments = normalizedTarget.split("/").filter(Boolean);
-	const sourceSegments = normalizeVaultPath(sourcePath)
-		.split("/")
-		.filter(Boolean);
-	sourceSegments.pop();
-
-	let sharedSegments = 0;
-	while (
-		sharedSegments < sourceSegments.length &&
-		sharedSegments < targetSegments.length &&
-		sourceSegments[sharedSegments] === targetSegments[sharedSegments]
-	) {
-		sharedSegments++;
-	}
-
-	const relativePath = [
-		...sourceSegments.slice(sharedSegments).map(() => ".."),
-		...targetSegments.slice(sharedSegments),
-	].join("/");
-
-	return relativePath.startsWith("../")
-		? relativePath
-		: `./${relativePath}`;
-}
-
-/**
- * Recover the canonical remote path represented by a shortest filename-only
- * link. The final filename is already present in the note, so only the rule's
- * directory template needs to be expanded.
- */
-export function resolveBareUploadPath(
+export function logicalToRemote(
 	rule: UploadRule,
-	fileName: string,
-	attachmentFolder: string,
-): string | null {
-	const normalizedRule = normalizeUploadRule(rule);
-	if (URL_VARIABLE_AT_START_PATTERN.test(normalizedRule.linkFormat)) {
-		return null;
-	}
-
-	const format = normalizedRule.linkFormat.replace(/\\/g, "/");
-	const slashIndex = format.lastIndexOf("/");
-	if (slashIndex === -1) {
-		return fileName;
-	}
-
-	const { name, extension, nameext } = getFileNameParts(fileName, false);
-	const directory = formatTemplate(format.substring(0, slashIndex), {
-		attachment: { type: "string", value: attachmentFolder },
-		name: { type: "string", value: name },
-		ext: { type: "string", value: extension },
-		nameext: { type: "string", value: nameext },
-	});
-	if (/\{\{[^}]+\}\}/.test(directory)) return null;
-
-	return [directory, fileName].filter(Boolean).join("/");
+	logicalPath: string,
+	webdavUrl: string,
+	variables: TemplateVariables,
+): UploadTarget {
+	const captured = matchPathTemplate(rule.logicalPath, logicalPath) ?? {};
+	return buildUploadTarget(
+		rule,
+		webdavUrl,
+		{ ...variables, ...captured },
+		logicalPath,
+	);
 }
 
 export function resolveUploadTarget(
@@ -347,145 +276,260 @@ export function resolveUploadTarget(
 	filePath: string,
 	webdavUrl: string,
 	variables: TemplateVariables,
+	logicalPath?: string,
 ): UploadTarget | null {
 	const rule = findUploadRule(rules, filePath, false);
-	return rule == null ? null : buildUploadTarget(rule, webdavUrl, variables);
+	return rule == null
+		? null
+		: logicalPath == null
+			? buildUploadTarget(rule, webdavUrl, variables)
+			: logicalToRemote(rule, logicalPath, webdavUrl, variables);
 }
 
-export function getEffectiveUrlPrefix(
-	rule: UploadRule,
-	webdavUrl: string,
-): string {
-	return normalizeUrlPrefix(rule.urlPrefix || webdavUrl);
+/** Capture formatted dates too, so existing paths never substitute today's date. */
+export function matchPathTemplate(
+	template: string,
+	path: string,
+): TemplateVariables | null {
+	return matchTemplate(
+		template.replace(/\\/g, "/").replace(/^\/+/, ""),
+		normalizeVaultPath(path),
+	);
 }
 
-export function getManagedUrlPrefix(
+function matchTemplate(
+	template: string,
+	value: string,
+	decodeValues = false,
+): TemplateVariables | null {
+	let pattern = "";
+	let offset = 0;
+	const keys: string[] = [];
+	for (const match of template.matchAll(TEMPLATE_VARIABLE_PATTERN)) {
+		pattern += escapeRegExp(template.slice(offset, match.index));
+		const key = templateKey(match[1], match[2]);
+		keys.push(key);
+		pattern +=
+			["attachment", "logicalpath", "remotepath"].includes(key) ||
+			match[2]?.includes("/")
+				? "(.*?)"
+				: "([^/]*?)";
+		offset = (match.index ?? 0) + match[0].length;
+	}
+	pattern += escapeRegExp(template.slice(offset));
+	const matched = new RegExp(`^${pattern}$`).exec(value);
+	if (matched == null) return null;
+	const variables: TemplateVariables = {};
+	for (const [index, key] of keys.entries()) {
+		const value = decodeValues
+			? safeDecodeURIComponent(matched[index + 1])
+			: matched[index + 1];
+		const previous = variables[key];
+		if (previous?.value !== undefined && previous.value !== value)
+			return null;
+		variables[key] = stringVariable(value);
+	}
+	return variables;
+}
+
+/** Resolve managed URL links through the same templates, without guessing a DAV host. */
+export function resolvePreviewUrl(
 	url: string,
-	webdavUrl: string,
 	rules: UploadRule[],
-): string | null {
-	const candidates = [
-		...rules.map((rule) => getEffectiveUrlPrefix(rule, webdavUrl)),
-		normalizeUrlPrefix(webdavUrl),
-	]
-		.filter((candidate, index, values) =>
-			candidate !== "" && values.indexOf(candidate) === index,
-		)
-		// Longest first: a more specific rule prefix must win over the shorter
-		// base WebDAV URL so extracting the remote path stops at the right point.
-		.sort((left, right) => right.length - left.length);
+	webdavUrl: string,
+	variables: TemplateVariables = {},
+): UploadTarget | null {
+	if (!/^https?:\/\//i.test(url)) return null;
+	const cleanUrl = stripUrlFragment(url);
+	for (const rule of rules) {
+		const template = canonicalTemplateUrl(
+			rule.previewUrl.replace(
+				/\{\{\s*url\s*\}\}/gi,
+				normalizeUrlPrefix(webdavUrl),
+			),
+		);
+		const captured = matchTemplate(
+			stripUrlFragment(template),
+			new URL(cleanUrl).href,
+			true,
+		);
+		if (captured == null) continue;
+		const vars = { ...variables, ...captured };
+		const capturedRemote = captured.remotepath;
+		if (capturedRemote?.type === "string") {
+			const remoteVars = matchPathTemplate(
+				rule.remotePath,
+				capturedRemote.value,
+			);
+			if (remoteVars == null) continue;
+			Object.assign(vars, remoteVars);
+		}
+		const target = buildUploadTarget(rule, webdavUrl, vars);
+		if (samePreviewUrl(target.previewUrl, cleanUrl)) return target;
+	}
+	return null;
+}
 
-	return candidates.find((candidate) => hasUrlPrefix(url, candidate)) ?? null;
+export function samePreviewUrl(left: string, right: string): boolean {
+	try {
+		return canonicalPreviewUrl(left) === canonicalPreviewUrl(right);
+	} catch {
+		return false;
+	}
+}
+
+function canonicalPreviewUrl(value: string): string {
+	const url = new URL(stripUrlFragment(value));
+	const path = url.pathname
+		.split("/")
+		.map((segment) => encodePathSegment(safeDecodeURIComponent(segment)))
+		.join("/");
+	return (
+		url.origin +
+		path +
+		url.search.replace(/%[\da-f]{2}/gi, (token) => token.toUpperCase())
+	);
+}
+
+function canonicalTemplateUrl(template: string): string {
+	const tokens: string[] = [];
+	let marker = "webdavtemplateplaceholder";
+	while (template.includes(marker)) marker += "x";
+	const marked = template.replace(TEMPLATE_VARIABLE_PATTERN, (token) => {
+		tokens.push(token);
+		return marker + (tokens.length - 1);
+	});
+	return new URL(marked).href.replace(
+		new RegExp(marker + "(\\d+)", "g"),
+		(_, index: string) => tokens[Number(index)],
+	);
 }
 
 export function isManagedUrl(
 	url: string,
 	webdavUrl: string,
 	rules: UploadRule[],
+	mappings: AttachmentMapping[] = [],
 ): boolean {
-	return getManagedUrlPrefix(url, webdavUrl, rules) != null;
+	return (
+		mappings.some((mapping) => samePreviewUrl(mapping.previewUrl, url)) ||
+		resolvePreviewUrl(url, rules, webdavUrl) != null
+	);
 }
 
-export function extractRemotePath(
-	url: string,
-	webdavUrl: string,
-	rules: UploadRule[],
+export function formatUploadLink(
+	target: { linkTarget: string; linkType?: "local" | "external" },
+	fileName: string,
+	useMarkdownLinks: boolean,
 ): string {
-	const prefix = getManagedUrlPrefix(url, webdavUrl, rules);
-	if (prefix == null) {
-		throw new Error(`URL is not managed by an upload rule: '${url}'`);
-	}
-
-	const path = extractPathForPrefix(url, prefix);
-	if (path == null || path === "/") {
-		throw new Error(`URL does not contain a WebDAV file path: '${url}'`);
-	}
-	return path;
+	const external = target.linkType === "external";
+	if (!external && !useMarkdownLinks && !/[\[\]|#]/.test(target.linkTarget))
+		return `[[${target.linkTarget}]]`;
+	const linkText = fileName.replace(/\\/g, "\\\\").replace(/[\[\]]/g, "\\$&");
+	const linkTarget = external
+		? target.linkTarget.replace(/[()]/g, encodePathSegment)
+		: encodeLocalLinkPath(target.linkTarget);
+	return `[${linkText}](${linkTarget})`;
 }
 
-export function buildManagedUrl(urlPrefix: string, remotePath: string): string {
-	// The prefix keeps its URL structure (`://`, `/`), so it is encoded with
-	// encodeURI; the remote path is encoded segment-by-segment so a filename
-	// like "a b.png" survives the round trip.
-	const prefix = normalizeUrlPrefix(urlPrefix);
-	return encodeUrlPrefix(prefix) + encodeRemotePath(remotePath);
-}
-
-function extractPathForPrefix(url: string, prefix: string): string | null {
-	const cleanUrl = url.trim().split(/[?#]/, 1)[0];
-	const normalizedPrefix = normalizeUrlPrefix(prefix);
-	const encodedPrefix = encodeUrlPrefix(normalizedPrefix);
-	const matchingPrefix = [normalizedPrefix, encodedPrefix].find(
-		(candidate) => cleanUrl === candidate || cleanUrl.startsWith(candidate + "/"),
-	);
-	if (matchingPrefix == null) {
-		return null;
-	}
-
-	return decodeRemotePath(cleanUrl.substring(matchingPrefix.length));
-}
-
-function hasUrlPrefix(url: string, prefix: string): boolean {
-	// A link may contain the prefix raw (typed by the user) or percent-encoded
-	// (generated by buildManagedUrl), so match against both forms.
-	const cleanUrl = url.trim().split(/[?#]/, 1)[0];
-	const normalizedPrefix = normalizeUrlPrefix(prefix);
-	const encodedPrefix = encodeUrlPrefix(normalizedPrefix);
-	return [normalizedPrefix, encodedPrefix].some(
-		(candidate) =>
-			cleanUrl === candidate || cleanUrl.startsWith(candidate + "/"),
-	);
-}
-
-export function normalizeRemotePath(path: string): string {
-	return "/" + normalizeVaultPath(path);
-}
-
-function encodeRemotePath(path: string): string {
-	// Internal paths are literal filenames; encode exactly once at the URL boundary.
-	return normalizeRemotePath(path)
+export function getLocalLinkTarget(
+	logicalPath: string,
+	sourcePath: string,
+	newLinkFormat: NewLinkFormat,
+): string {
+	const normalizedTarget = normalizeVaultPath(logicalPath);
+	if (newLinkFormat === "absolute") return "/" + normalizedTarget;
+	// Keep the logical directory in remote-only links. A basename alone cannot
+	// distinguish attachments with the same name after local copies are deleted.
+	if (newLinkFormat === "shortest") return normalizedTarget;
+	const targetSegments = normalizedTarget.split("/").filter(Boolean);
+	const sourceSegments = normalizeVaultPath(sourcePath)
 		.split("/")
-		.map((segment) => encodeURIComponent(segment).replace(/[()]/g, (char) => "%" + char.charCodeAt(0).toString(16).toUpperCase()))
-		.join("/");
+		.filter(Boolean);
+	sourceSegments.pop();
+	let shared = 0;
+	while (
+		shared < sourceSegments.length &&
+		shared < targetSegments.length &&
+		sourceSegments[shared] === targetSegments[shared]
+	)
+		shared++;
+	const relative = [
+		...sourceSegments.slice(shared).map(() => ".."),
+		...targetSegments.slice(shared),
+	].join("/");
+	return relative.startsWith("../") ? relative : `./${relative}`;
 }
 
-function encodeLocalLinkPath(path: string): string {
-	// Preserve local path syntax (`/`, `./`, and `../`) while encoding each
-	// actual filename segment for Markdown links.
+export function normalizeFilePath(path: string): string {
+	if (/\{\{[^}]*\}\}/.test(path))
+		throw new Error(`Unresolved path variable: '${path}'.`);
+	if (/^[a-z][a-z\d+.-]*:/i.test(path.trim()) || path.startsWith("//"))
+		throw new Error(
+			"Attachment paths must be relative to the vault or WebDAV root, not URLs.",
+		);
+	const normalized = normalizeVaultPath(path.trim());
+	if (!normalized || path.trim().endsWith("/"))
+		throw new Error("Attachment path must include a filename.");
+	return normalized;
+}
+
+export function encodeLocalLinkPath(path: string): string {
 	return path
 		.replace(/\\/g, "/")
 		.split("/")
 		.map((segment) =>
-			segment === "" || segment === "." || segment === ".."
+			["", ".", ".."].includes(segment)
 				? segment
-				: encodeURIComponent(segment).replace(/[()]/g, (char) => "%" + char.charCodeAt(0).toString(16).toUpperCase()),
+				: encodePathSegment(segment),
 		)
 		.join("/");
 }
 
-function decodeRemotePath(path: string): string {
-	const decoded = path.split("/").map((segment) => {
-		const value = safeDecodeURIComponent(segment);
-		if (/[\\/]/.test(value)) throw new Error("Encoded path separators are not supported.");
-		return value;
-	}).join("/");
-	return normalizeRemotePath(decoded);
+function renderPreviewUrl(
+	template: string,
+	resolver: TemplateResolver,
+): string {
+	const rendered = resolver.render(template, (value, key, offset) => {
+		if (key === "url") return normalizeUrlPrefix(value);
+		const before = template.slice(0, offset);
+		return /[?#]/.test(before)
+			? encodeURIComponent(value)
+			: value.split("/").map(encodePathSegment).join("/");
+	});
+	validatePreviewUrl(rendered);
+	return new URL(rendered).href;
 }
 
+function validatePreviewUrl(value: string): void {
+	if (/\{\{[^}]*\}\}/.test(value))
+		throw new Error("Preview URL contains an unresolved variable.");
+	const url = new URL(value);
+	if (
+		!["http:", "https:"].includes(url.protocol) ||
+		url.username ||
+		url.password
+	)
+		throw new Error(
+			"Preview URL must use HTTP or HTTPS without embedded credentials.",
+		);
+}
+
+function stripUrlFragment(url: string): string {
+	return url.split("#", 1)[0];
+}
+function encodePathSegment(value: string): string {
+	return encodeURIComponent(value).replace(
+		/[()]/g,
+		(char) => "%" + char.charCodeAt(0).toString(16).toUpperCase(),
+	);
+}
+function escapeRegExp(value: string): string {
+	return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
 function stringValue(value: unknown): string {
 	return typeof value === "string" ? value : "";
 }
-
 export function isRecord(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value != null && !Array.isArray(value);
-}
-
-function encodeUrlPrefix(prefix: string): string {
-	try {
-		const url = new URL(prefix);
-		return url.origin + url.pathname.split("/")
-			.map((segment) => encodeURIComponent(safeDecodeURIComponent(segment))).join("/").replace(/\/+$/, "");
-	} catch {
-		return encodeURI(prefix);
-	}
 }

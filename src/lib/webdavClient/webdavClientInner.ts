@@ -1,4 +1,8 @@
-import { requestUrl, type RequestUrlParam, type RequestUrlResponse } from "obsidian";
+import {
+	requestUrl,
+	type RequestUrlParam,
+	type RequestUrlResponse,
+} from "obsidian";
 import type { WebDavImageUploaderSettings } from "../../settings";
 
 /**
@@ -42,7 +46,10 @@ export class WebDavClientInner {
 		const response = await this.request({
 			url,
 			method: "PUT",
-			headers: { "Content-Type": "application/octet-stream", "If-None-Match": "*" },
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"If-None-Match": "*",
+			},
 			body: data,
 		});
 
@@ -84,7 +91,12 @@ export class WebDavClientInner {
 		return (await this.getResource(path)).data;
 	}
 
-	async moveFile(oldPath: string, newPath: string, overwrite = false, depth = 0) {
+	async moveFile(
+		oldPath: string,
+		newPath: string,
+		overwrite = false,
+		depth = 0,
+	) {
 		const url = this.buildUrl(this.encodePath(oldPath));
 
 		if (!overwrite) {

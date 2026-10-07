@@ -1,102 +1,120 @@
 import type { WebDavImageUploaderSettings } from "../../settings";
 import { TransferSkippedError } from "../transfer/transferErrors";
 import type WebDavImageUploaderPlugin from "../../main";
-import { buildManagedUrl, extractRemotePath } from "../attachment/uploadRules";
 import {
-	ensureVaultParentFolder,
-	getAvailableVaultPath,
-} from "../attachment/obsidianPaths";
-import {
-	WebDavClientInner,
-	type WebDavResource,
-} from "./webdavClientInner";
+	normalizeFilePath,
+	type AttachmentMapping,
+} from "../attachment/uploadRules";
+import { ensureVaultParentFolder } from "../attachment/obsidianPaths";
+import { WebDavClientInner, type WebDavResource } from "./webdavClientInner";
 
 export type { WebDavResource } from "./webdavClientInner";
+export type FileInfo = AttachmentMapping & { fileName: string };
 
+/** DAV methods accept remote paths explicitly. Preview URLs never enter here. */
 export class WebDavClient {
-	plugin: WebDavImageUploaderPlugin;
 	client!: WebDavClientInner;
-	private settings!: WebDavImageUploaderSettings;
+	private connection = "";
+	private connectionVersion = 0;
 
-	constructor(plugin: WebDavImageUploaderPlugin, settings = plugin.settings) {
-		this.plugin = plugin;
+	constructor(
+		readonly plugin: WebDavImageUploaderPlugin,
+		settings: WebDavImageUploaderSettings = plugin.settings,
+	) {
 		this.initClient(settings);
 	}
 
-	initClient(settings = this.plugin.settings) {
-		this.settings = { ...settings, uploadRules: settings.uploadRules.map(rule => ({ ...rule, extensions: [...rule.extensions] })) };
+	initClient(settings: WebDavImageUploaderSettings = this.plugin.settings) {
+		const connection = JSON.stringify([
+			settings.url,
+			settings.username,
+			settings.password,
+		]);
+		if (connection !== this.connection) {
+			this.connection = connection;
+			this.connectionVersion++;
+		}
 		this.client = new WebDavClientInner(settings);
 	}
 
-	async downloadFile(url: string) {
-		const path = this.getPath(url);
-
-		const resp = await this.getFileContents(url);
-
-		const filePath = getAvailableVaultPath(this.plugin.app, path);
-		await ensureVaultParentFolder(this.plugin.app, filePath);
-		return await this.plugin.app.vault.createBinary(filePath, resp);
+	cacheKey(remotePath: string): string {
+		return JSON.stringify([
+			this.connectionVersion,
+			normalizeFilePath(remotePath),
+		]);
 	}
 
-	async uploadFile(file: File, path: string, urlPrefix: string): Promise<FileInfo> {
-		const buffer = await file.arrayBuffer();
+	async downloadFile(mapping: AttachmentMapping) {
+		const logicalPath = normalizeFilePath(mapping.logicalPath);
+		const existing = this.plugin.app.vault.getFileByPath(logicalPath);
+		if (existing != null) return existing;
+		if (this.plugin.app.vault.getAbstractFileByPath(logicalPath) != null)
+			throw new Error(`Logical path is occupied: '${logicalPath}'.`);
+		const data = await this.getFileContents(mapping.remotePath);
+		await ensureVaultParentFolder(this.plugin.app, logicalPath);
+		return await this.plugin.app.vault.createBinary(logicalPath, data);
+	}
 
-		// Try the configured remote path exactly once. putFileContents uses
-		// If-None-Match so an existing remote file is never overwritten; callers
-		// can then retain/save the local file instead of inventing another path.
-		if (!await this.client.putFileContents(path, buffer)) {
-			throw new TransferSkippedError(`Remote file already exists: '${path}'. Local file retained.`);
+	async uploadFile(
+		file: File,
+		mapping: AttachmentMapping,
+	): Promise<FileInfo> {
+		const remotePath = normalizeFilePath(mapping.remotePath);
+		if (
+			!(await this.client.putFileContents(
+				remotePath,
+				await file.arrayBuffer(),
+			))
+		) {
+			throw new TransferSkippedError(
+				`Remote file already exists: '${remotePath}'. Local file retained.`,
+			);
 		}
-
-		return { fileName: file.name, remotePath: path, url: buildManagedUrl(urlPrefix, path) };
+		return {
+			logicalPath: mapping.logicalPath,
+			remotePath,
+			previewUrl: mapping.previewUrl,
+			fileName: file.name,
+		};
 	}
 
-	async getFileContents(url: string) {
-		return await this.client.getFileContents(this.getPath(url));
+	async getFileContents(remotePath: string) {
+		return await this.client.getFileContents(normalizeFilePath(remotePath));
 	}
-
-	async getResource(url: string): Promise<WebDavResource> {
-		return await this.client.getResource(this.getPath(url));
+	async getResource(remotePath: string): Promise<WebDavResource> {
+		return await this.client.getResource(normalizeFilePath(remotePath));
 	}
-
-	async renameFile(oldPath: string, newPath: string) {
-		await this.client.moveFile(oldPath, newPath, false);
+	async exists(remotePath: string): Promise<boolean> {
+		return await this.client.exists(normalizeFilePath(remotePath));
+	}
+	async propfind(remotePath: string) {
+		return await this.client.customRequest(normalizeFilePath(remotePath), {
+			method: "PROPFIND",
+			headers: { Depth: "0" },
+		});
+	}
+	async renameFile(oldRemotePath: string, newRemotePath: string) {
+		await this.client.moveFile(
+			normalizeFilePath(oldRemotePath),
+			normalizeFilePath(newRemotePath),
+			false,
+		);
+	}
+	async deleteFile(remotePath: string) {
+		await this.client.deleteFile(normalizeFilePath(remotePath));
 	}
 
 	async testConnection() {
 		try {
-			const resp = await this.client.customRequest("/", {
+			const response = await this.client.customRequest("/", {
 				method: "PROPFIND",
 				headers: { Depth: "0" },
 			});
-
-			// WebDAV servers may return 207 (Multi-Status) for a successful PROPFIND request
-			if (resp.status === 207) {
-				return null;
-			}
-
-			return `Check connection failed: ${resp.status}`;
-		} catch (e) {
-			return `${e}`;
+			return response.status === 207
+				? null
+				: `Check connection failed: ${response.status}`;
+		} catch (error) {
+			return String(error);
 		}
 	}
-
-	async deleteFile(url: string) {
-		const path = this.getPath(url);
-		await this.client.deleteFile(path);
-	}
-
-	getPath(url: string) {
-		return extractRemotePath(
-			url,
-			this.settings.url,
-			this.settings.uploadRules,
-		);
-	}
-}
-
-export interface FileInfo {
-	remotePath: string;
-	fileName: string;
-	url: string;
 }

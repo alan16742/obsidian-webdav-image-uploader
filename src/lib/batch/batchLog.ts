@@ -15,15 +15,41 @@ function cell(value = ""): string {
 	return value.replace(/\|/g, "\\|").replace(/[\r\n]+/g, " ");
 }
 
-export async function createBatchLog(app: App, results: BatchProcessFileResult[], cleanup: CleanupResult[] = []) {
-	const path = getAvailableVaultPath(app, `webdav-batch-log-${moment().format("YYYYMMDD-HHmmss")}.md`);
-	let content = "## Transfers\n\n| Status | Note | Original Link | New Link | Message |\n| --- | --- | --- | --- | --- |\n";
+export async function createBatchLog(
+	app: App,
+	results: BatchProcessFileResult[],
+	cleanup: CleanupResult[] = [],
+) {
+	const path = getAvailableVaultPath(
+		app,
+		`webdav-batch-log-${moment().format("YYYYMMDD-HHmmss")}.md`,
+	);
+	let content =
+		"## Transfers\n\n| Status | Note | Original Link | New Link | Message |\n| --- | --- | --- | --- | --- |\n";
 	for (const result of results) {
-		content += "| " + [result.status, result.note.path, result.link?.path, result.newLink, result.message].map(value => cell(value)).join(" | ") + " |\n";
+		content +=
+			"| " +
+			[
+				result.status,
+				result.note.path,
+				result.link?.path,
+				result.newLink,
+				result.message,
+			]
+				.map((value) => cell(value))
+				.join(" | ") +
+			" |\n";
 	}
 	if (cleanup.length > 0) {
-		content += "\n## Local attachment cleanup\n\n| Status | File | Message |\n| --- | --- | --- |\n";
-		for (const result of cleanup) content += "| " + [result.status, result.file.path, result.message].map(cell).join(" | ") + " |\n";
+		content +=
+			"\n## Local attachment cleanup\n\n| Status | File | Message |\n| --- | --- | --- |\n";
+		for (const result of cleanup)
+			content +=
+				"| " +
+				[result.status, result.file.path, result.message]
+					.map(cell)
+					.join(" | ") +
+				" |\n";
 	}
 	const file = await app.vault.create(path, content);
 	await app.workspace.getLeaf(true).openFile(file);

@@ -2,11 +2,14 @@ const DIRECT_MEDIA_EMBED_CLASS = "webdav-direct-media-embed";
 const STANDALONE_MEDIA_LINE_CLASS = "webdav-standalone-media-line";
 
 export class EditorMediaLayout {
-	private readonly measuredElements = new Map<Element, { event: string; handler: () => void }>();
+	private readonly measuredElements = new Map<
+		Element,
+		{ event: string; handler: () => void }
+	>();
 	private disposed = false;
 	private readonly markedEmbeds = new Set<HTMLElement>();
 
-	constructor(private readonly requestEditorMeasure?: () => void) { }
+	constructor(private readonly requestEditorMeasure?: () => void) {}
 
 	mark(element: Element): boolean {
 		const embed = element.closest<HTMLElement>(
@@ -33,14 +36,17 @@ export class EditorMediaLayout {
 			return;
 		}
 
-		const eventName = element.tagName === "IMG"
-			? "load"
-			: element.tagName === "VIDEO" || element.tagName === "AUDIO"
-				? "loadedmetadata"
-				: undefined;
+		const eventName =
+			element.tagName === "IMG"
+				? "load"
+				: element.tagName === "VIDEO" || element.tagName === "AUDIO"
+					? "loadedmetadata"
+					: undefined;
 		if (eventName == null) return;
 
-		const handler = () => { if (!this.disposed) this.requestEditorMeasure?.(); };
+		const handler = () => {
+			if (!this.disposed) this.requestEditorMeasure?.();
+		};
 		this.measuredElements.set(element, { event: eventName, handler });
 		element.addEventListener(eventName, handler);
 		this.requestEditorMeasure();
@@ -64,9 +70,7 @@ export class EditorMediaLayout {
 		}
 		const embeds = root.matches(`.${DIRECT_MEDIA_EMBED_CLASS}`)
 			? [root]
-			: Array.from(
-				root.querySelectorAll(`.${DIRECT_MEDIA_EMBED_CLASS}`),
-			);
+			: Array.from(root.querySelectorAll(`.${DIRECT_MEDIA_EMBED_CLASS}`));
 		for (const embed of embeds) {
 			this.markedEmbeds.delete(embed as HTMLElement);
 		}
@@ -85,7 +89,8 @@ export class EditorMediaLayout {
 
 	dispose() {
 		this.disposed = true;
-		for (const [element, listener] of this.measuredElements) element.removeEventListener(listener.event, listener.handler);
+		for (const [element, listener] of this.measuredElements)
+			element.removeEventListener(listener.event, listener.handler);
 		this.measuredElements.clear();
 		for (const embed of this.markedEmbeds) {
 			const line = getContainingEditorLine(embed);
@@ -106,12 +111,14 @@ function refreshMediaLine(line: HTMLElement) {
 	const directEmbeds = Array.from(line.children).filter((child) =>
 		child.classList.contains(DIRECT_MEDIA_EMBED_CLASS),
 	);
-	const isStandalone = directEmbeds.length === 1 &&
+	const isStandalone =
+		directEmbeds.length === 1 &&
 		Array.from(line.childNodes).every((node) => {
 			if (node.nodeType === 3) return node.textContent?.trim() === "";
-			return isElement(node) && (
-				node.classList.contains("cm-widgetBuffer") ||
-				node.classList.contains(DIRECT_MEDIA_EMBED_CLASS)
+			return (
+				isElement(node) &&
+				(node.classList.contains("cm-widgetBuffer") ||
+					node.classList.contains(DIRECT_MEDIA_EMBED_CLASS))
 			);
 		});
 	line.classList.toggle(STANDALONE_MEDIA_LINE_CLASS, isStandalone);

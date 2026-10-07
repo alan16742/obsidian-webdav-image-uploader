@@ -3,11 +3,13 @@ import type { FileType } from "../attachment/fileTypes";
 import type { LinkInfo } from "../../utils";
 import type { TFile } from "obsidian";
 import type WebDavImageUploaderPlugin from "../../main";
+import type { AttachmentMapping } from "../attachment/uploadRules";
 
 export interface Link<T extends LinkData> {
 	readonly data: T;
 	readonly session: TransferSession;
-	getRemoteUrl(): string;
+	getPreviewUrl(): string;
+	getMapping(): Promise<AttachmentMapping>;
 
 	init(): Promise<void>;
 
@@ -30,12 +32,8 @@ export type LinkData = LinkInfo | File;
 
 export type LinkType = "local" | "external";
 
-export interface UploadFileInfo {
+export interface UploadFileInfo extends AttachmentMapping {
 	fileName: string;
-	remotePath: string;
-	localPath?: string;
-
-	url: string;
 
 	markdownLink: string;
 }

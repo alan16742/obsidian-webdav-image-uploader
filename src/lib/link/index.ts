@@ -26,7 +26,10 @@ export function createLink<T extends LinkData>(
 	}
 
 	for (const factory of factories) {
-		const link = factory.create(plugin, fileType, data, { sourcePath, session });
+		const link = factory.create(plugin, fileType, data, {
+			sourcePath,
+			session,
+		});
 		if (link != null) {
 			return link;
 		}

@@ -18,5 +18,4 @@ export const imageMediaAdapter: MediaAdapter = {
 	restoreSource(element, source) {
 		(element as HTMLImageElement).src = source;
 	},
-
 };

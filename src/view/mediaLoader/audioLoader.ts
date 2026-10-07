@@ -24,7 +24,6 @@ export const audioMediaAdapter: MediaAdapter = {
 		getSourceElement(element).src = source;
 		getAudio(element).load();
 	},
-
 };
 
 function getSourceElement(
@@ -36,5 +35,5 @@ function getSourceElement(
 function getAudio(element: Element): HTMLAudioElement {
 	return element.tagName === "AUDIO"
 		? (element as HTMLAudioElement)
-		: element.parentElement as HTMLAudioElement;
+		: (element.parentElement as HTMLAudioElement);
 }

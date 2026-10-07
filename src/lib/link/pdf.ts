@@ -1,7 +1,10 @@
 import type { TFile } from "obsidian";
 import { AttachmentLink } from "./attachment";
 import type { LinkData, LinkFactory } from "./types";
-import { ensureVaultParentFolder, getAvailableVaultPath } from "../attachment/obsidianPaths";
+import {
+	ensureVaultParentFolder,
+	getAvailableVaultPath,
+} from "../attachment/obsidianPaths";
 
 const factory: LinkFactory = {
 	create(plugin, type, data, context) {
@@ -22,9 +25,12 @@ export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 	}
 
 	downloadable(): boolean {
-		if (this.linkType === "external") return super.downloadable();
-		return this.session.settings.enableDummyPdf === true &&
-			!(this.data instanceof File) && this.isDummyPdf == null;
+		if (super.downloadable()) return true;
+		return (
+			this.session.settings.enableDummyPdf === true &&
+			!(this.data instanceof File) &&
+			this.isDummyPdf == null
+		);
 	}
 
 	async init(): Promise<void> {
@@ -38,11 +44,20 @@ export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 	}
 
 	private async inspect() {
-		if (!this.session.settings.enableDummyPdf || this.linkType === "external" || this.data instanceof File) {
+		if (
+			!this.session.settings.enableDummyPdf ||
+			this.linkType === "external" ||
+			this.data instanceof File
+		) {
 			this.isDummyPdf = false;
 			return;
 		}
-		const file = this.getTFile();
+		const file = this.getLocalFile();
+		if (file == null) {
+			this.isDummyPdf = false;
+			await super.init();
+			return;
+		}
 		const content = await this.plugin.app.vault.cachedRead(file);
 		const url = content.trim();
 		if (!/^https?:\/\/\S+$/.test(url)) {
@@ -51,7 +66,12 @@ export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 		}
 		this.dummyFile = file;
 		this.dummyContent = content;
-		this.remoteUrl = url;
+		this.previewUrl = url;
+		const mapped =
+			this.session.paths.findLogical(file.path) ??
+			(await this.session.paths.resolve(url, this.sourcePath));
+		if (mapped != null)
+			this.mapping = { ...mapped, logicalPath: file.path };
 		this.linkType = "external";
 		this.isDummyPdf = true;
 	}
@@ -59,16 +79,33 @@ export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 	async upload(note: TFile) {
 		await this.init();
 		const result = await super.upload(note);
-		if (!this.session.settings.enableDummyPdf) return result;
-		let file = this.session.dummyFiles.get(result.url);
+		if (
+			!this.session.settings.useLogicalLinks ||
+			!this.session.settings.enableDummyPdf
+		)
+			return result;
+		let file = this.session.dummyFiles.get(result.logicalPath);
 		if (file == null) {
-			const path = getAvailableVaultPath(this.plugin.app, result.remotePath);
+			const path = getAvailableVaultPath(
+				this.plugin.app,
+				result.logicalPath,
+			);
 			await ensureVaultParentFolder(this.plugin.app, path);
-			file = await this.plugin.app.vault.create(path, result.url);
-			this.session.dummyFiles.set(result.url, file);
+			file = await this.plugin.app.vault.create(path, result.previewUrl);
+			this.session.dummyFiles.set(result.logicalPath, file);
 		}
+		const mapping = {
+			logicalPath: file.path,
+			remotePath: result.remotePath,
+			previewUrl: result.previewUrl,
+		};
+		this.mapping = mapping;
+		await this.session.paths.remember(
+			mapping,
+			file.path === result.logicalPath ? undefined : result.logicalPath,
+		);
 		const markdownLink = this.formatLocalLink(note, file.path, file.name);
-		return { ...result, localPath: file.path, markdownLink: embed(markdownLink) };
+		return { ...result, ...mapping, markdownLink: embed(markdownLink) };
 	}
 
 	async download(note: TFile) {
@@ -78,28 +115,45 @@ export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 			const result = await super.download(note);
 			return { ...result, markdownLink: embed(result.markdownLink) };
 		}
-		const data = await this.session.client.getFileContents(this.getRemoteUrl());
+		const data = await this.session.client.getFileContents(
+			(await this.getMapping()).remotePath,
+		);
 		const current = await this.plugin.app.vault.read(this.dummyFile);
-		if (current !== this.dummyContent) throw new Error("Dummy PDF changed during download; local file retained.");
+		if (current !== this.dummyContent)
+			throw new Error(
+				"Dummy PDF changed during download; local file retained.",
+			);
 		await this.plugin.app.vault.modifyBinary(this.dummyFile, data);
 		this.tFile = this.dummyFile;
 		return {
 			tFile: this.dummyFile,
-			markdownLink: embed(this.formatLocalLink(note, this.dummyFile.path, this.dummyFile.name)),
+			markdownLink: embed(
+				this.formatLocalLink(
+					note,
+					this.dummyFile.path,
+					this.dummyFile.name,
+				),
+			),
 		};
 	}
 
 	async rename(note: TFile, newPath: string) {
 		await this.init();
-		const url = await super.rename(note, newPath);
+		const markdownLink = await super.rename(note, newPath);
+		const url = this.getPreviewUrl();
 		if (this.dummyFile != null) {
 			await this.plugin.app.vault.process(this.dummyFile, (content) => {
-				if (content !== this.dummyContent) throw new Error("Dummy PDF changed. Remote file was moved to '" + url + "'; update the pointer manually.");
+				if (content !== this.dummyContent)
+					throw new Error(
+						"Dummy PDF changed. Remote file was moved to '" +
+							url +
+							"'; update the pointer manually.",
+					);
 				return url;
 			});
 			this.dummyContent = url;
 		}
-		return url;
+		return embed(markdownLink);
 	}
 
 	async delete(note: TFile) {

@@ -49,8 +49,5 @@ export function setMediaEmbedClasses(
 		"image-embed",
 		"mod-empty-attachment",
 	);
-	container.classList.add(
-		"media-embed",
-		`${mediaType}-embed`,
-	);
+	container.classList.add("media-embed", `${mediaType}-embed`);
 }
