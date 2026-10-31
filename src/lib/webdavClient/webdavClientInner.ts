@@ -1,145 +1,78 @@
-import { requestUrl, RequestUrlParam, RequestUrlResponse } from "obsidian";
-import WebDavImageUploaderPlugin from "./main";
-import { getToken } from "./utils";
-import { WebDavImageUploaderSettings } from "./settings";
+import {
+	requestUrl,
+	type RequestUrlParam,
+	type RequestUrlResponse,
+} from "obsidian";
+import type { WebDavImageUploaderSettings } from "../../settings";
 
-export class WebDavClient {
-	plugin: WebDavImageUploaderPlugin;
-	client: WebDavClientInner;
-
-	constructor(plugin: WebDavImageUploaderPlugin) {
-		this.plugin = plugin;
-
-		this.initClient();
-	}
-
-	initClient() {
-		const settings = this.plugin.settings;
-		this.client = new WebDavClientInner(settings);
-	}
-
-	async downloadFile(url: string, sourcePath?: string) {
-		const path = this.getPath(url);
-		const fileName = path.split("/").pop()!;
-
-		const resp = await this.client.getFileContents(path);
-
-		const filePath =
-			await this.plugin.app.fileManager.getAvailablePathForAttachment(
-				fileName,
-				sourcePath,
-			);
-		return await this.plugin.app.vault.createBinary(filePath, resp);
-	}
-
-	async uploadFile(file: File, path: string): Promise<FileInfo> {
-		const buffer = await file.arrayBuffer();
-
-		const success = await this.client.putFileContents(path, buffer);
-
-		if (!success) {
-			throw new Error(`Failed to upload file: '${file.name}'`);
-		}
-
-		return { fileName: file.name, url: this.getUrl(path) };
-	}
-
-	async renameFile(oldPath: string, newPath: string) {
-		await this.client.moveFile(oldPath, newPath, false);
-	}
-
-	async testConnection() {
-		try {
-			const resp = await this.client.customRequest("/", {
-				method: "PROPFIND",
-				headers: { Depth: "0" },
-			});
-
-			// WebDAV servers may return 207 (Multi-Status) for a successful PROPFIND request
-			if (resp.status === 207) {
-				return null;
-			}
-
-			return `Check connection failed: ${resp.status}`;
-		} catch (e) {
-			return `${e}`;
-		}
-	}
-
-	async deleteFile(url: string) {
-		const path = this.getPath(url);
-		await this.client.deleteFile(path);
-	}
-
-	getUrl(path: string) {
-		const domain =
-			this.plugin.settings.directLink !== ""
-				? this.plugin.settings.directLink
-				: this.plugin.settings.url;
-		return encodeURI(domain + path);
-	}
-
-	getPath(url: string) {
-		const index = url.indexOf("/", "https://".length + 1);
-		return decodeURI(url.substring(index));
-	}
-}
-
-export interface FileInfo {
-	fileName: string;
-	url: string;
-}
+/**
+ * Maximum number of "create parent directory, then retry" attempts. Bounds the
+ * recursion so a persistently failing server cannot cause an infinite loop.
+ */
+const MAX_RETRY_DEPTH = 3;
 
 /**
  * refer to: https://github.com/perry-mitchell/webdav-client
  */
-class WebDavClientInner {
+export class WebDavClientInner {
 	private baseUrl: string;
-	private directLink: string;
 	private authHeader: string;
 
 	constructor(settings: WebDavImageUploaderSettings) {
-		const { url, directLink, username, password } = settings;
-		this.directLink = directLink;
+		const { url, username, password } = settings;
 		this.baseUrl = url.endsWith("/") ? url.slice(0, -1) : url;
 		if (username && password) {
-			const credentials = getToken(username, password);
+			const credentials = WebDavClientInner.getToken(username, password);
 			this.authHeader = `Basic ${credentials}`;
 		} else {
 			this.authHeader = "";
 		}
 	}
 
-	async putFileContents(path: string, data: ArrayBuffer | string) {
+	static getToken(username?: string, password?: string) {
+		const bytes = new TextEncoder().encode(`${username}:${password}`);
+		const binString = String.fromCharCode(...bytes);
+		return btoa(binString);
+	}
+
+	async putFileContents(
+		path: string,
+		data: ArrayBuffer | string,
+		depth = 0,
+	): Promise<boolean> {
 		const encodedPath = this.encodePath(path);
 		const url = this.buildUrl(encodedPath);
 
 		const response = await this.request({
 			url,
 			method: "PUT",
-			headers: { "Content-Type": "application/octet-stream" },
+			headers: {
+				"Content-Type": "application/octet-stream",
+				"If-None-Match": "*",
+			},
 			body: data,
 		});
 
-		// parent directory not exists
-		if (response.status === 409) {
+		if (response.status === 412) return false;
+
+		// Parent directory does not exist. Create it and retry, but bound the
+		// retries so a persistently failing server can't cause an infinite loop.
+		if (response.status === 409 && depth < MAX_RETRY_DEPTH) {
 			await this.ensureDirectoryExists(
 				path.substring(0, path.lastIndexOf("/")),
 			);
 
-			await this.putFileContents(path, data);
-
-			return;
-		} else {
-			this.handleResponseCode(response);
+			return await this.putFileContents(path, data, depth + 1);
 		}
+
+		this.handleResponseCode(response);
 
 		return true;
 	}
 
-	async getFileContents(path: string) {
+	async getResource(path: string): Promise<WebDavResource> {
 		const encodedPath = this.encodePath(path);
-		const url = this.buildUrl(encodedPath, true);
+		const url = this.buildUrl(encodedPath);
 
 		const response = await this.request({
 			url,
@@ -148,10 +81,22 @@ class WebDavClientInner {
 
 		this.handleResponseCode(response);
 
-		return response.arrayBuffer;
+		return {
+			data: response.arrayBuffer,
+			contentType: this.getResponseHeader(response, "content-type"),
+		};
 	}
 
-	async moveFile(oldPath: string, newPath: string, overwrite = false) {
+	async getFileContents(path: string) {
+		return (await this.getResource(path)).data;
+	}
+
+	async moveFile(
+		oldPath: string,
+		newPath: string,
+		overwrite = false,
+		depth = 0,
+	) {
 		const url = this.buildUrl(this.encodePath(oldPath));
 
 		if (!overwrite) {
@@ -176,12 +121,16 @@ class WebDavClientInner {
 			},
 		});
 
-		// parent directory not exists
-		if ([404, 409, 500].includes(response.status)) {
+		// Parent directory does not exist. Create it and retry, but bound the
+		// retries so a persistently failing server can't cause an infinite loop.
+		if (
+			[404, 409, 500].includes(response.status) &&
+			depth < MAX_RETRY_DEPTH
+		) {
 			await this.ensureDirectoryExists(
 				newPath.substring(0, newPath.lastIndexOf("/")),
 			);
-			await this.moveFile(oldPath, newPath, overwrite);
+			await this.moveFile(oldPath, newPath, overwrite, depth + 1);
 			return;
 		}
 
@@ -226,7 +175,7 @@ class WebDavClientInner {
 			method: "HEAD",
 		});
 
-		if (response.status === 200) {
+		if (response.status >= 200 && response.status < 300) {
 			return true;
 		}
 
@@ -240,20 +189,18 @@ class WebDavClientInner {
 	}
 
 	async ensureDirectoryExists(path: string) {
+		// WebDAV MKCOL cannot create nested paths in one request, so walk the
+		// hierarchy one segment at a time. Implementations commonly return 405 or
+		// 409 when a collection already exists. Treat both as idempotent and avoid
+		// a follow-up HEAD probe, which is not supported reliably by all bridges.
 		const directories = path.split("/").filter((dir) => dir !== "");
 		let currentPath = "";
 
 		for (const dir of directories) {
 			currentPath += "/" + dir;
 			const response = await this.createDirectory(currentPath);
-			if ([405, 409].includes(response.status)) {
-				// most webdav servers return 405/409 if the directory already exists
-				console.warn(
-					`Directory already exists or cannot be created: ${currentPath}`,
-				);
-			} else {
-				this.handleResponseCode(response);
-			}
+			if ([405, 409].includes(response.status)) continue;
+			this.handleResponseCode(response);
 		}
 	}
 
@@ -278,15 +225,11 @@ class WebDavClientInner {
 		});
 	}
 
-	private buildUrl(path: string, useDirectLink = false) {
+	private buildUrl(path: string) {
 		if (!path.startsWith("/")) {
 			path = "/" + path;
 		}
-		const base =
-			useDirectLink && this.directLink !== ""
-				? this.directLink
-				: this.baseUrl;
-		return base + path;
+		return this.baseUrl + path;
 	}
 
 	private encodePath(path: string) {
@@ -319,10 +262,30 @@ class WebDavClientInner {
 	}
 
 	private handleResponseCode(response: RequestUrlResponse) {
+		// Preserve the historical contract: requestUrl may already have handled
+		// redirects, and 207 Multi-Status is valid for WebDAV servers.
 		if (response.status >= 400) {
 			throw new Error(
 				`${response.status} ${response.text ?? "Unknown error"}`,
 			);
 		}
 	}
+
+	private getResponseHeader(
+		response: RequestUrlResponse,
+		name: string,
+	): string | undefined {
+		const target = name.toLowerCase();
+		for (const [key, value] of Object.entries(response.headers)) {
+			if (key.toLowerCase() === target) {
+				return value;
+			}
+		}
+		return undefined;
+	}
+}
+
+export interface WebDavResource {
+	data: ArrayBuffer;
+	contentType?: string;
 }
