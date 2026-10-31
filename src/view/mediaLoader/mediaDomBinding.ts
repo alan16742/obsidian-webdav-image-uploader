@@ -421,7 +421,7 @@ export class MediaDomBinding {
 			restoreSource &&
 			binding.adapter.getSource(element) === binding.displayedUrl
 		) {
-			binding.adapter.restoreSource(element, binding.originalUrl);
+			binding.adapter.setSource(element, binding.originalUrl);
 		}
 		binding.handle?.release();
 	}

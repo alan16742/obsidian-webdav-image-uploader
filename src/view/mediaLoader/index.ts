@@ -17,17 +17,14 @@ import {
 import { hasUrlScheme } from "../../lib/attachment/attachmentPaths";
 
 export { imageMediaAdapter } from "./imageLoader";
-export { videoMediaAdapter } from "./videoLoader";
-export { audioMediaAdapter } from "./audioLoader";
+export { audioMediaAdapter, videoMediaAdapter } from "./mediaAdapters";
 export { getMediaType } from "../../lib/attachment/fileTypes";
 export type { MediaType } from "../../lib/attachment/fileTypes";
 
 export interface MediaAdapter {
 	selector: string;
-	matches(element: Element): boolean;
 	getSource(element: Element): string;
 	setSource(element: Element, source: string): void;
-	restoreSource(element: Element, source: string): void;
 }
 
 export class WebDavMediaLoader implements MediaDomLoader {
@@ -78,7 +75,7 @@ export class WebDavMediaLoader implements MediaDomLoader {
 	}
 
 	getAdapter(element: Element): MediaAdapter | undefined {
-		return this.adapters.find((adapter) => adapter.matches(element));
+		return this.adapters.find((adapter) => element.matches(adapter.selector));
 	}
 
 	async resolveMissingAttachment(

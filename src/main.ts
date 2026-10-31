@@ -26,7 +26,6 @@ import {
 import { BatchDownloader, BatchUploader } from "./lib/batch";
 import { ConfirmModal } from "./view/modals/confirmModal";
 import {
-	findUploadRule,
 	isManagedUrl,
 	type AttachmentMapping,
 } from "./lib/attachment/uploadRules";
@@ -274,9 +273,5 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 			this.settings.uploadRules,
 			this.settings.pathMappings,
 		);
-	}
-
-	isExcludeFile(path: string) {
-		return findUploadRule(this.settings.uploadRules, path, false) == null;
 	}
 }

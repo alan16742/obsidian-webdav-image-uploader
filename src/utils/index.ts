@@ -1,13 +1,9 @@
-import { MarkdownView, Notice, moment, type App, type Editor } from "obsidian";
-export { getFileType } from "../lib/attachment/fileTypes";
-export type { FileType } from "../lib/attachment/fileTypes";
+import { MarkdownView, Notice, moment, type App } from "obsidian";
 import {
 	hasUrlScheme,
 	normalizeAttachmentPath,
 	safeDecodeURIComponent,
 } from "../lib/attachment/attachmentPaths";
-import { matchLinks, type LinkInfo } from "../lib/note/noteLinks";
-export { matchLinks } from "../lib/note/noteLinks";
 export type { LinkInfo } from "../lib/note/noteLinks";
 
 export async function reportTask(
@@ -61,25 +57,6 @@ export function getFormatVariables(
 	};
 }
 
-export function replaceLink(
-	editor: Editor,
-	lineNumber: number,
-	link: LinkInfo,
-	newLink?: string,
-) {
-	const line = editor.getLine(lineNumber);
-	if (line.slice(link.start, link.end) !== link.raw) {
-		throw new Error(
-			"The note changed. The original link was not replaced.",
-		);
-	}
-	const newLine =
-		line.substring(0, link.start) +
-		(newLink ?? "") +
-		line.substring(link.end);
-	editor.setLine(lineNumber, newLine);
-}
-
 export function getFileByPath(
 	app: App,
 	path: string,
@@ -102,16 +79,6 @@ export function getFileByPath(
 	} catch {
 		return null;
 	}
-}
-
-// get link currently selected
-export function getSelectedLink(editor: Editor) {
-	const cursor = editor.getCursor();
-	const line = editor.getLine(cursor.line);
-	const links = matchLinks(line);
-	return links.find(
-		(link) => link.start <= cursor.ch && link.end >= cursor.ch,
-	);
 }
 
 export function isLocalPath(path: string) {
