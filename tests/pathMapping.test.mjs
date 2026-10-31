@@ -24,6 +24,10 @@ const exampleRule = () => normalizeUploadRule({
 	extensions: ["png", "pdf"], logicalPath: "Attachments/{{now:YYYY}}/{{nameext}}",
 	remotePath: "Pictures/{{now:YYYY}}/{{nameext}}", previewUrl: "https://cdn.example.com/{{remotePath}}",
 });
+const sourcePathRule = () => normalizeUploadRule({
+	extensions: ["png"], logicalPath: "{{attachment}}/pics/{{nameext}}",
+	remotePath: "{{logicalPath}}", previewUrl: "https://example.com/p/od/{{remotePath}}",
+});
 const vars = (name = "example.png", year = "2026") => ({
 	attachment: { type: "string", value: "Attachments" }, nameext: { type: "string", value: name },
 	name: { type: "string", value: name.split(".")[0] }, ext: { type: "string", value: name.split(".").pop() },
@@ -63,8 +67,11 @@ function fixture(options = {}) {
 		},
 		metadataCache: {
 			getFirstLinkpathDest(path, source) {
-				try { return app.vault.getFileByPath(normalizeAttachmentPath(path, source, false).slice(1)); }
-				catch { return null; }
+				try {
+					const direct = app.vault.getFileByPath(normalizeAttachmentPath(path, source, false).slice(1));
+					if (direct != null || path.includes("/")) return direct;
+					return [...files.values()].find(file => file instanceof TFile && file.name === path) ?? null;
+				} catch { return null; }
 			},
 			getFileCache: () => ({ links: [], embeds: [] }),
 		},
@@ -108,6 +115,7 @@ test("logical, remote and preview paths are independently rendered", () => {
 	assert.equal(target.remotePath, "Pictures/2026/example.png");
 	assert.equal(target.previewUrl, "https://cdn.example.com/Pictures/2026/example.png");
 	assert.equal(getLocalLinkTarget(target.logicalPath, "Notes/note.md", "relative"), "../Attachments/2026/example.png");
+	assert.equal(getLocalLinkTarget(target.logicalPath, "Notes/note.md", "shortest"), "example.png");
 	assert.equal(formatUploadLink({ linkTarget: target.logicalPath }, "example.png", false), "[[Attachments/2026/example.png]]");
 });
 
@@ -299,19 +307,31 @@ test("first matching rule is retained", () => {
 	assert.equal(findUploadRule(rules, "photo.png"), rules[1]);
 });
 
-test("existing local upload preserves logical path and creates no remote directory in vault", async () => {
-	const f = fixture();
-	const source = f.add("Attachments/2021/old.png", "image bytes");
-	const link = createLink(f.plugin, matchLinks("![](../Attachments/2021/old.png)")[0], f.note.path);
+test("existing local upload renders a new target from the source folder", async () => {
+	const f = fixture({ uploadRules: [sourcePathRule()] });
+	f.add("attachments/obassets/a.png", "image bytes");
+	const link = createLink(f.plugin, matchLinks("![](../attachments/obassets/a.png)")[0], f.note.path);
 	await link.init();
 	const result = await link.upload(f.note);
-	assert.equal(result.logicalPath, source.path);
-	assert.equal(result.remotePath, "Pictures/2021/old.png");
-	assert.ok(result.markdownLink.includes("../Attachments/2021/old.png"));
-	assert.ok(!result.markdownLink.includes("Pictures") && !result.markdownLink.includes("https:"));
+	assert.equal(result.logicalPath, "attachments/obassets/pics/a.png");
+	assert.equal(result.remotePath, "attachments/obassets/pics/a.png");
+	assert.equal(result.previewUrl, "https://example.com/p/od/attachments/obassets/pics/a.png");
+	assert.equal(result.markdownLink, "![a.png](../attachments/obassets/pics/a.png)");
 	assert.deepEqual(f.created, []);
 	assert.equal(f.requests[0].headers["If-None-Match"], "*");
 	assert.equal(f.plugin.saved.pathMappings[0].remotePath, result.remotePath);
+});
+
+test("shortest wikilinks resolve the source by name and stay shortest", async () => {
+	const f = fixture({ uploadRules: [sourcePathRule()] });
+	f.app.vault.getConfig = name => ({ newLinkFormat: "shortest", useMarkdownLinks: false })[name];
+	f.add("attachments/obassets/a.png", "image bytes");
+	const link = createLink(f.plugin, matchLinks("![[a.png]]")[0], f.note.path);
+	await link.init();
+	const result = await link.upload(f.note);
+	assert.equal(result.logicalPath, "attachments/obassets/pics/a.png");
+	assert.equal(result.remotePath, "attachments/obassets/pics/a.png");
+	assert.equal(result.markdownLink, "![[a.png]]");
 });
 
 test("local media takes precedence and missing relative/wiki targets use the same mapping", async () => {
@@ -370,7 +390,7 @@ test("batch upload reuses remote transfer and cleans only committed local refere
 	assert.equal(f.requests.filter(request => request.method === "PUT").length, 1);
 	assert.equal(batch.result.filter(item => item.status === "success").length, 2);
 	assert.equal(f.files.has("Attachments/2021/example.png"), false, JSON.stringify(batch.cleanupResults));
-	assert.ok(f.note.data.includes("../Attachments/2021/example.png"));
+	assert.ok(f.note.data.includes("../Attachments/2026/example.png"));
 });
 
 test("URL mode disables uploading existing local links without changing their note text", async () => {
@@ -536,7 +556,7 @@ test("cache keys use DAV destinations regardless of preview URLs and invalidate 
 test("remote collisions retain the local file and do not replace mappings", async () => {
 	const f = fixture();
 	f.add("Attachments/2021/example.png", "local bytes");
-	f.remote.set("Pictures/2021/example.png", new TextEncoder().encode("existing").buffer);
+	f.remote.set("Pictures/2026/example.png", new TextEncoder().encode("existing").buffer);
 	const link = createLink(f.plugin, matchLinks("![](../Attachments/2021/example.png)")[0], f.note.path);
 	await assert.rejects(link.upload(f.note), /already exists/);
 	assert.ok(f.files.has("Attachments/2021/example.png"));
@@ -565,8 +585,8 @@ test("uploading an existing PDF creates its dummy under the logical folder and k
 	await link.init();
 	const result = await link.upload(f.note);
 	assert.equal(original.data, "%PDF original");
-	assert.equal(result.logicalPath, "Attachments/2021/original 1.pdf");
-	assert.equal(result.remotePath, "Pictures/2021/original.pdf");
+	assert.equal(result.logicalPath, "Attachments/2026/original.pdf");
+	assert.equal(result.remotePath, "Pictures/2026/original.pdf");
 	assert.equal(f.settings.pathMappings.length, 1);
 	const dummy = createLink(f.plugin, matchLinks(result.markdownLink)[0], f.note.path);
 	await dummy.init();

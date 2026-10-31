@@ -158,11 +158,16 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 				throw new Error("Attachment changed while being read.");
 			file = new File([buffer], source.name, { lastModified: mtime });
 		}
-		const folder = await getAttachmentFolderPath(
-			this.plugin.app,
-			this.sourcePath,
-			file.name,
-		);
+		// Existing files provide their actual parent folder. Only new pasted or
+		// dropped files use Obsidian's configured attachment destination.
+		const folder =
+			source == null
+				? await getAttachmentFolderPath(
+						this.plugin.app,
+						this.sourcePath,
+						file.name,
+					)
+				: source.path.substring(0, source.path.lastIndexOf("/"));
 		const vars = getFormatVariables(
 			file,
 			this.session.getNoteInfo(this.sourcePath) ?? note,
@@ -173,7 +178,6 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			file.name,
 			this.session.settings.url,
 			vars,
-			source?.path,
 		);
 		if (selected == null)
 			throw new TransferSkippedError(
@@ -221,13 +225,15 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		fileName: string,
 	): string {
 		const markdown = getUseMarkdownLinks(this.plugin.app);
-		const linkTarget = markdown
-			? getLocalLinkTarget(
-					logicalPath,
-					this.sourcePath,
-					getNewLinkFormat(this.plugin.app),
-				)
-			: logicalPath;
+		const newLinkFormat = getNewLinkFormat(this.plugin.app);
+		const linkTarget =
+			markdown || newLinkFormat === "shortest"
+				? getLocalLinkTarget(
+						logicalPath,
+						this.sourcePath,
+						newLinkFormat,
+					)
+				: logicalPath;
 		return formatUploadLink({ linkTarget }, fileName, markdown);
 	}
 

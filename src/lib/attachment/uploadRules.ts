@@ -439,9 +439,8 @@ export function getLocalLinkTarget(
 ): string {
 	const normalizedTarget = normalizeVaultPath(logicalPath);
 	if (newLinkFormat === "absolute") return "/" + normalizedTarget;
-	// Keep the logical directory in remote-only links. A basename alone cannot
-	// distinguish attachments with the same name after local copies are deleted.
-	if (newLinkFormat === "shortest") return normalizedTarget;
+	if (newLinkFormat === "shortest")
+		return getFileNameParts(normalizedTarget, false).nameext;
 	const targetSegments = normalizedTarget.split("/").filter(Boolean);
 	const sourceSegments = normalizeVaultPath(sourcePath)
 		.split("/")

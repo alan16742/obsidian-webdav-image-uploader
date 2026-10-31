@@ -340,7 +340,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 			logicalPath: "the resolved vault attachment path",
 			remotePath: "the resolved WebDAV storage path",
 			attachment:
-				"Obsidian's configured attachment folder for the current note",
+				"the source attachment's parent folder, or Obsidian's configured attachment folder for new files",
 			name: "file basename",
 			ext: "file extension without the dot",
 			nameext: "file name with extension",

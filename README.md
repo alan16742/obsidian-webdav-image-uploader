@@ -9,7 +9,7 @@ This is an Obsidian (https://obsidian.md) plugin for managing local images by st
 ### Upload, Download, and Delete Files
 
 - When pasting or dragging images into a note, the plugin selects the first matching upload rule and uploads to its WebDAV storage path. With **Use logical attachment links** enabled, it inserts a logical link such as `![](../Attachments/photo.jpg)` or `![[Attachments/photo.jpg]]`. With the switch disabled, it inserts the final preview URL, such as `![](https://img.example.com/Pictures/photo.jpg)`. Auto upload can be toggled in settings or using `WebDAV Image Uploader: Toggle auto upload`.
-- **Use logical attachment links** also allows uploading existing local file links (`![file](attachments/file.jpg)`, `[](attachments/file.jpg)`, or `[[attachments/file.jpg]]`) through the context menu and batch commands. You can configure whether to keep the local file after a successful upload. The switch defaults to disabled (URL links).
+- **Use logical attachment links** also allows uploading existing local links (`![file](attachments/file.jpg)`, `[](attachments/file.jpg)`, or `[[file.jpg]]`) through the context menu and batch commands. The source link is resolved to the actual vault file, then the upload rules render a new target; the source path is not reused as `logicalPath`. You can configure whether to keep the local file after a successful upload. The switch defaults to disabled (URL links).
 - When right-clicking a managed attachment link, you can select `Download file from WebDAV` to download to its logical vault path. An existing local file is retained.
 - When right-clicking a preview link, you can select `Delete file from WebDAV` to delete the image from the WebDAV server and remove the link from the note.
 - When right-clicking a preview link, you can select `Rename file from WebDAV` to rename(move) the image from the WebDAV server.
@@ -47,9 +47,11 @@ The **WebDAV connection URL** at the top of settings is only the server connecti
 
 | Field | Purpose | Default |
 | --- | --- | --- |
-| `logicalPath` | Local download destination and, in logical mode, the path used in note links | `{{attachment}}/{{nameext}}` |
+| `logicalPath` | Vault-relative target for downloads and logical links | `{{attachment}}/{{nameext}}` |
 | `remotePath` | Actual storage path used by every DAV operation | `{{logicalPath}}` |
-| `previewUrl` | Final remote preview URL, inserted directly in notes in URL mode | `{{url}}/{{remotePath}}` |
+| `previewUrl` | Final remote preview URL, used in URL mode | `{{url}}/{{remotePath}}` |
+
+For an existing attachment, `{{attachment}}` is the source file's parent folder. For a new pasted or dropped file, it is Obsidian's configured attachment folder for the current note.
 
 For example:
 
@@ -58,21 +60,28 @@ For example:
   "prefix": "",
   "suffix": "",
   "extensions": ["jpg", "jpeg", "png", "gif", "svg", "webp"],
-  "logicalPath": "Attachments/{{now:YYYY}}/{{nameext}}",
-  "remotePath": "Pictures/{{now:YYYY}}/{{nameext}}",
-  "previewUrl": "https://a.com/{{remotePath}}"
+  "logicalPath": "{{attachment}}/pics/{{nameext}}",
+  "remotePath": "{{logicalPath}}",
+  "previewUrl": "https://example.com/p/od/{{remotePath}}"
 }
 ```
 
-This produces `Attachments/2026/example.png` in the vault's logical namespace, stores the bytes at `Pictures/2026/example.png` on WebDAV, and previews from `https://a.com/Pictures/2026/example.png`. With logical links enabled, a note in `Notes/` uses `![](../Attachments/2026/example.png)` or `![[Attachments/2026/example.png]]`. With the switch disabled, it uses `![](https://a.com/Pictures/2026/example.png)` regardless of Obsidian's Wikilinks preference. URL mode does not require a local file or directory. Uploading an existing local attachment preserves its actual vault path as `logicalPath`; the logical template generates paths for newly pasted/dropped files.
+For an existing file at `attachments/obassets/a.png`, referenced as `../attachments/obassets/a.png` or `[[a.png]]`, this rule produces:
 
-All three template fields expose the same variables: `url`, `logicalPath`, `remotePath`, `attachment`, `name`, `ext`, `nameext`, `mtime`, `now`, `notename`, `notectime`, and `notemtime`. `{{url}}` always means the main WebDAV connection URL. References to `{{logicalPath}}` and `{{remotePath}}` are resolved by dependency, including forward references; a known local path or stored mapping supplies the already resolved value. Date variables accept Moment.js formats such as `{{now:YYYY}}`. Unknown variables, missing values and circular references fail directly. Invalid templates are not rewritten or replaced with a previously saved preview URL. Paths still use vault/DAV path normalization, and preview URL values are encoded once. Empty template fields use the defaults above. The rule card's preview shows the note target for the selected mode.
+- `logicalPath`: `attachments/obassets/pics/a.png`
+- `remotePath`: `attachments/obassets/pics/a.png`
+- `previewUrl`: `https://example.com/p/od/attachments/obassets/pics/a.png`
+- note target: the new logical path in the configured link format, or the preview URL in URL mode
 
-For logical links, local files always take precedence; missing targets are resolved from the note context and mapped to their remote preview URL. Existing logical links continue to work when the switch is disabled. Uploading does not create vault directories corresponding to WebDAV directories. Explicit downloads in either mode create only the logical destination's parent directories and replace the note target with a local link. The shortest link preference retains the logical directory for remote attachments so identically named files remain distinguishable. Changing modes applies to new uploads and renames; it does not rewrite all existing notes.
+Uploading does not move the local source file. The note receives the new target, then **Uploaded file operation** decides whether the source file is kept, trashed, or deleted.
 
-Resolved mappings are saved in the plugin's `data.json` as `pathMappings`. This keeps time-dependent remote destinations stable after restarting or deleting local copies. Changing the preview template updates fallback URLs; changing a storage template does not move previously uploaded files. Rules use `logicalPath`, `remotePath`, and `previewUrl`; the link mode is saved as `useLogicalLinks`. Managed remote URL links are recognized through saved mappings or reversible URL/path templates.
+All templates share the variables `url`, `logicalPath`, `remotePath`, `attachment`, `name`, `ext`, `nameext`, `mtime`, `now`, `notename`, `notectime`, and `notemtime`. `{{url}}` is the WebDAV connection URL. Path references resolve by dependency, including forward references; downloads, renames, and stored mappings supply known values. Dates accept Moment.js formats such as `{{now:YYYY}}`. Unknown values, circular references, and invalid templates fail explicitly instead of falling back to an older URL. Empty fields use the defaults above, and the rule preview shows the note target for the selected mode.
 
-In logical mode, rename accepts a new **logical vault path**, maps it to the DAV destination, and inserts a logical link. In URL mode, rename accepts the **actual WebDAV path** and inserts the updated preview URL. The internal mapping retains a logical download destination in both modes. All PUT, GET, HEAD, PROPFIND, DELETE and MOVE requests use `remotePath` and the main connection URL. Preview URLs never serve as DAV operation inputs. Blob caches are keyed by the DAV destination and connection, and are invalidated after upload, rename and delete.
+For logical links, local files take precedence; missing targets are resolved from the note context and mapped to their remote preview URL. Existing logical links continue to work in URL mode. Uploads do not create WebDAV-shaped vault directories. Downloads create only the logical destination's parent directories and replace the note target with a local link. Shortest links use the filename alone; other Wikilink modes use the full logical path. Changing modes affects new uploads and renames, not existing notes.
+
+Resolved mappings are stored as `pathMappings` in `data.json`, keeping time-dependent destinations stable across restarts. Changing `previewUrl` updates fallback URLs; changing `remotePath` does not move existing files. Managed URLs are recognized through mappings or reversible URL/path templates.
+
+Rename accepts a **logical vault path** in logical mode and an **actual DAV path** in URL mode. The mapping always retains a logical download destination. Every DAV operation uses `remotePath` and the connection URL; preview URLs are never sent to WebDAV. Blob caches are keyed by DAV destination and invalidated after upload, rename, and delete.
 
 ## Others
 
