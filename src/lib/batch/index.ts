@@ -113,18 +113,12 @@ class BatchProcessor {
 						link.path,
 						this.session.settings.url,
 						this.session.settings.uploadRules,
-						this.plugin.settings.pathMappings,
 					) ||
 					(isLocalPath(link.path) &&
 						(findUploadRule(
 							this.session.settings.uploadRules,
 							link.path,
 						) != null ||
-							this.session.paths.hasRecordedLink(
-								link.path,
-								path,
-								link.syntax !== "wiki",
-							) ||
 							(this.session.settings.enableDummyPdf &&
 								getFileType(link.path) === "pdf"))),
 		);

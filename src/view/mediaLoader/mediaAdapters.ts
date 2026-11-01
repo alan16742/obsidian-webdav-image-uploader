@@ -1,8 +1,6 @@
 import type { MediaAdapter } from ".";
 
-function createHTMLMediaAdapter(
-	tagName: "AUDIO" | "VIDEO",
-): MediaAdapter {
+function createHTMLMediaAdapter(tagName: "AUDIO" | "VIDEO"): MediaAdapter {
 	const tag = tagName.toLowerCase();
 	return {
 		selector: `${tag}[src], ${tag} source[src]`,

@@ -11,7 +11,6 @@ import {
 	getLocalLinkTarget,
 	resolveUploadTarget,
 	type AttachmentMapping,
-	type UploadTarget,
 } from "../attachment/uploadRules";
 import {
 	ensureVaultParentFolder,
@@ -106,17 +105,13 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		if (this.linkType === "external")
 			return this.plugin.isWebdavUrl(this.getPreviewUrl());
 		const local = this.getLocalFile();
-		return local == null
-			? this.session.paths.hasRecordedLink(
-					this.data.path,
-					this.sourcePath,
-					this.data.syntax !== "wiki",
-				) ||
-					findUploadRule(
-						this.session.settings.uploadRules,
-						this.data.path,
-					) != null
-			: this.session.paths.findLogical(local.path) != null;
+		return (
+			findUploadRule(
+				this.session.settings.uploadRules,
+				local?.path ?? this.data.path,
+				local == null,
+			) != null
+		);
 	}
 
 	getTFile(): TFile {
@@ -183,21 +178,7 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			throw new TransferSkippedError(
 				`No upload rule matched '${file.name}'.`,
 			);
-		const recorded =
-			source == null
-				? undefined
-				: this.session.paths.findLogical(source.path);
-		const target: UploadTarget =
-			recorded == null
-				? selected
-				: {
-						...selected,
-						...(await this.session.paths.currentPreview(
-							recorded,
-							this.sourcePath,
-						)),
-					};
-		const result = await this.session.upload(file, target, source);
+		const result = await this.session.upload(file, selected, source);
 		this.mapping = result;
 		return {
 			...result,
@@ -241,7 +222,6 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		if (!this.downloadable()) throw new Error("File is not downloadable.");
 		const mapping = await this.getMapping();
 		this.tFile = await this.session.client.downloadFile(mapping);
-		await this.session.paths.remember(mapping);
 		return {
 			tFile: this.tFile,
 			markdownLink: this.formatLocalLink(
@@ -260,7 +240,6 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			newPath,
 			this.sourcePath,
 		);
-		this.session.paths.assertAvailable(target, old.logicalPath);
 		if (
 			target.logicalPath === old.logicalPath &&
 			target.remotePath === old.remotePath
@@ -283,7 +262,6 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 			);
 		this.plugin.mediaLoader?.blobStore.invalidate(old.remotePath);
 		this.plugin.mediaLoader?.blobStore.invalidate(target.remotePath);
-		await this.session.paths.remember(target, old.logicalPath);
 		this.mapping = target;
 		this.previewUrl = target.previewUrl;
 		if (local != null && target.logicalPath !== old.logicalPath) {
@@ -311,6 +289,5 @@ export class AttachmentLink<T extends LinkData> implements Link<T> {
 		const mapping = await this.getMapping();
 		await this.session.client.deleteFile(mapping.remotePath);
 		this.plugin.mediaLoader?.blobStore.invalidate(mapping.remotePath);
-		await this.session.paths.forget(mapping.logicalPath);
 	}
 }

@@ -13,9 +13,7 @@ import {
 	isRecord,
 	createDefaultUploadRule,
 	sanitizeUploadRules,
-	sanitizePathMappings,
 	TEMPLATE_VARIABLE_NAMES,
-	type AttachmentMapping,
 	type UploadRule,
 } from "./lib/attachment/uploadRules";
 import { UploadRuleSettingRenderer } from "./view/settings/uploadRuleSettings";
@@ -35,7 +33,6 @@ export interface WebDavImageUploaderSettings {
 	uploadedFileOperation: "default" | "delete" | "none";
 	enableDummyPdf?: boolean;
 	uploadRules: UploadRule[];
-	pathMappings: AttachmentMapping[];
 
 	// Batch processes
 	createBatchLog: boolean;
@@ -61,7 +58,6 @@ export const DEFAULT_SETTINGS: WebDavImageUploaderSettings = {
 			previewUrl: "{{url}}/{{remotePath}}",
 		},
 	],
-	pathMappings: [],
 
 	createBatchLog: true,
 };
@@ -73,7 +69,6 @@ export function sanitizeSettings(data: unknown): WebDavImageUploaderSettings {
 	const settings: WebDavImageUploaderSettings = {
 		...DEFAULT_SETTINGS,
 		uploadRules: sanitizeUploadRules(source),
-		pathMappings: sanitizePathMappings(source.pathMappings),
 	};
 
 	for (const key of ["url", "username", "password"] as const) {
@@ -332,7 +327,7 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 			text: "Available template variables",
 		});
 		variablesEl.createEl("p", {
-			text: "All three templates use the same variables. References are resolved by dependency. Use {{var}} for values and {{dateVar:format}} for Moment.js date formatting.",
+			text: "All three templates use the same variables. References are resolved by dependency. Use {{var}} for values and {{dateVar:format}} for Moment.js date formatting. Time-dependent variables are allowed only in logicalPath; remotePath and previewUrl derive stable values from it.",
 		});
 		const variableList = variablesEl.createEl("ul");
 		const descriptions: Record<string, string> = {
@@ -344,11 +339,11 @@ export class WebDavImageUploaderSettingTab extends PluginSettingTab {
 			name: "file basename",
 			ext: "file extension without the dot",
 			nameext: "file name with extension",
-			mtime: "file last modified time",
-			now: "current time",
+			mtime: "file last modified time (logicalPath only)",
+			now: "current time (logicalPath only)",
 			notename: "note basename",
-			notectime: "note creation time",
-			notemtime: "note last modified time",
+			notectime: "note creation time (logicalPath only)",
+			notemtime: "note last modified time (logicalPath only)",
 		};
 		for (const variable of TEMPLATE_VARIABLE_NAMES) {
 			const item = variableList.createEl("li");

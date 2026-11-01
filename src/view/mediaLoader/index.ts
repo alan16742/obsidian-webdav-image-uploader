@@ -75,7 +75,9 @@ export class WebDavMediaLoader implements MediaDomLoader {
 	}
 
 	getAdapter(element: Element): MediaAdapter | undefined {
-		return this.adapters.find((adapter) => element.matches(adapter.selector));
+		return this.adapters.find((adapter) =>
+			element.matches(adapter.selector),
+		);
 	}
 
 	async resolveMissingAttachment(

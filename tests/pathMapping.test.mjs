@@ -14,15 +14,14 @@ import { WebDavBlobStore } from "../src/lib/webdavClient/webdavBlobStore.ts";
 import { WebDavMediaLoader } from "../src/view/mediaLoader/index.ts";
 import { createLink } from "../src/lib/link/index.ts";
 import { matchLinks } from "../src/lib/note/noteLinks.ts";
-import { TransferSession } from "../src/lib/transfer/transferSession.ts";
 import { BatchDownloader, BatchUploader } from "../src/lib/batch/index.ts";
 import { UploadRuleSettingRenderer } from "../src/view/settings/uploadRuleSettings.ts";
 
 globalThis.window = globalThis;
 const connectionUrl = "https://dav.example.com/dav";
 const exampleRule = () => normalizeUploadRule({
-	extensions: ["png", "pdf"], logicalPath: "Attachments/{{now:YYYY}}/{{nameext}}",
-	remotePath: "Pictures/{{now:YYYY}}/{{nameext}}", previewUrl: "https://cdn.example.com/{{remotePath}}",
+	extensions: ["png", "pdf"], logicalPath: "Attachments/{{nameext}}",
+	remotePath: "Pictures/{{nameext}}", previewUrl: "https://cdn.example.com/{{remotePath}}",
 });
 const sourcePathRule = () => normalizeUploadRule({
 	extensions: ["png"], logicalPath: "{{attachment}}/pics/{{nameext}}",
@@ -79,13 +78,7 @@ function fixture(options = {}) {
 	};
 	const plugin = {
 		app, settings,
-		isWebdavUrl: url => new AttachmentPathResolver(plugin).findPreview(url) != null || resolvePreviewUrl(url, settings.uploadRules, settings.url) != null,
-		async rememberPathMapping(mapping, previous) {
-			settings.pathMappings = settings.pathMappings.filter(item => item.logicalPath !== mapping.logicalPath && item.logicalPath !== previous);
-			settings.pathMappings.push({ ...mapping });
-			plugin.saved = sanitizeSettings(settings);
-		},
-		async forgetPathMapping(path) { settings.pathMappings = settings.pathMappings.filter(item => item.logicalPath !== path); },
+		isWebdavUrl: url => resolvePreviewUrl(url, settings.uploadRules, settings.url) != null,
 	};
 	plugin.client = new WebDavClient(plugin);
 	setRequestHandler(async request => {
@@ -111,12 +104,12 @@ function fixture(options = {}) {
 
 test("logical, remote and preview paths are independently rendered", () => {
 	const target = buildUploadTarget(exampleRule(), connectionUrl, vars());
-	assert.equal(target.logicalPath, "Attachments/2026/example.png");
-	assert.equal(target.remotePath, "Pictures/2026/example.png");
-	assert.equal(target.previewUrl, "https://cdn.example.com/Pictures/2026/example.png");
-	assert.equal(getLocalLinkTarget(target.logicalPath, "Notes/note.md", "relative"), "../Attachments/2026/example.png");
+	assert.equal(target.logicalPath, "Attachments/example.png");
+	assert.equal(target.remotePath, "Pictures/example.png");
+	assert.equal(target.previewUrl, "https://cdn.example.com/Pictures/example.png");
+	assert.equal(getLocalLinkTarget(target.logicalPath, "Notes/note.md", "relative"), "../Attachments/example.png");
 	assert.equal(getLocalLinkTarget(target.logicalPath, "Notes/note.md", "shortest"), "example.png");
-	assert.equal(formatUploadLink({ linkTarget: target.logicalPath }, "example.png", false), "[[Attachments/2026/example.png]]");
+	assert.equal(formatUploadLink({ linkTarget: target.logicalPath }, "example.png", false), "[[Attachments/example.png]]");
 });
 
 test("empty path fields use the configured defaults", () => {
@@ -127,24 +120,17 @@ test("empty path fields use the configured defaults", () => {
 	assert.deepEqual(rule.extensions, ["png"]);
 });
 
-test("obsolete rule fields and switch values are ignored", () => {
-	const defaults = normalizeUploadRule({});
-	const rule = normalizeUploadRule({ linkFormat: "{{url}}/old/{{nameext}}", urlPrefix: "https://old.example.com/" });
-	assert.deepEqual(rule, defaults);
-	assert.equal("linkFormat" in rule, false);
-	assert.equal("urlPrefix" in rule, false);
-	assert.equal(sanitizeSettings(undefined).useLogicalLinks, false);
-	assert.equal(sanitizeSettings({ enableLocalLinkUpload: true }).useLogicalLinks, false);
-	assert.equal(sanitizeSettings({ enableLocalLinkUpload: false }).useLogicalLinks, false);
-	const settings = sanitizeSettings({ enableLocalLinkUpload: false, useLogicalLinks: true });
-	assert.equal(settings.useLogicalLinks, true);
-	assert.equal("enableLocalLinkUpload" in settings, false);
-});
-
-test("every template field accepts the complete shared variable set", () => {
+test("logical paths freeze time values while derived fields reject them", () => {
+	const unstable = new Set(["mtime", "now", "notectime", "notemtime"]);
 	for (const field of ["logicalPath", "remotePath", "previewUrl"]) {
 		for (const variable of TEMPLATE_VARIABLE_NAMES) {
-			assert.deepEqual(validateUploadRule({ ...exampleRule(), [field]: `{{${variable}}}` }, connectionUrl), [], `${field}: ${variable}`);
+			const errors = validateUploadRule({ ...exampleRule(), [field]: `{{${variable}}}` }, connectionUrl);
+			if (field !== "logicalPath" && unstable.has(variable)) {
+				assert.equal(errors.length, 1, `${field}: ${variable}`);
+				assert.match(errors[0], /time-dependent/);
+			} else {
+				assert.deepEqual(errors, [], `${field}: ${variable}`);
+			}
 		}
 	}
 	for (const field of ["logicalPath", "remotePath", "previewUrl"]) {
@@ -154,12 +140,28 @@ test("every template field accepts the complete shared variable set", () => {
 	}
 });
 
+test("time values frozen in logicalPath drive stable derived paths", () => {
+	const rule = normalizeUploadRule({
+		...exampleRule(),
+		logicalPath: "Attachments/{{mtime:YYYY}}/{{nameext}}",
+		remotePath: "Pictures/{{logicalPath}}",
+	});
+	const historical = { ...vars("old.png"), mtime: { type: "date", value: { format: () => "2021" } } };
+	const target = buildUploadTarget(rule, connectionUrl, historical);
+	assert.equal(target.logicalPath, "Attachments/2021/old.png");
+	assert.equal(target.remotePath, "Pictures/Attachments/2021/old.png");
+	assert.equal(target.previewUrl, "https://cdn.example.com/Pictures/Attachments/2021/old.png");
+	const resolved = logicalToRemote(rule, target.logicalPath, connectionUrl, vars("old.png", "2026"));
+	assert.equal(resolved.remotePath, target.remotePath);
+	assert.equal(resolved.previewUrl, target.previewUrl);
+});
+
 test("template dependency resolution supports forward references and encodes URLs once", () => {
 	const rule = normalizeUploadRule({ ...exampleRule(), logicalPath: "Attachments/{{remotePath}}", previewUrl: "{{url}}/{{remotePath}}?logical={{logicalPath}}" });
 	const target = buildUploadTarget(rule, connectionUrl, vars("a b.png"));
-	assert.equal(target.logicalPath, "Attachments/Pictures/2026/a b.png");
-	assert.equal(target.remotePath, "Pictures/2026/a b.png");
-	assert.equal(target.previewUrl, connectionUrl + "/Pictures/2026/a%20b.png?logical=Attachments%2FPictures%2F2026%2Fa%20b.png");
+	assert.equal(target.logicalPath, "Attachments/Pictures/a b.png");
+	assert.equal(target.remotePath, "Pictures/a b.png");
+	assert.equal(target.previewUrl, connectionUrl + "/Pictures/a%20b.png?logical=Attachments%2FPictures%2Fa%20b.png");
 	assert.equal(resolvePreviewUrl(target.previewUrl, [rule], connectionUrl)?.logicalPath, target.logicalPath);
 });
 
@@ -237,35 +239,29 @@ test("rule summaries display the note target selected by the link mode", async (
 	assert.ok(external.includes("https://cdn.example.com/Pictures/"));
 });
 
-test("all three input dropdowns expose and insert the same variables", () => {
+test("variable dropdowns expose only variables valid for each field", () => {
 	const f = fixture();
 	const rule = normalizeUploadRule({ ...exampleRule(), extensions: [] });
 	const originalDocument = globalThis.document;
 	globalThis.document = { createElement: () => ({ appendChild() {}, addEventListener() {}, empty() {} }) };
 	renderedSettings.length = 0;
+	const timeVariables = new Set(["mtime", "now", "notectime", "notemtime"]);
 	let saves = 0;
 	try {
 		const renderer = new UploadRuleSettingRenderer(f.app, f.plugin, () => saves++);
 		renderer.createUploadRuleCard(rule);
 		for (const field of ["logicalPath", "remotePath", "previewUrl"]) {
 			const row = renderedSettings.find(setting => setting.name === field);
-			assert.deepEqual(row.dropdown.options, ["", ...TEMPLATE_VARIABLE_NAMES]);
+			const expected = field === "logicalPath"
+				? TEMPLATE_VARIABLE_NAMES
+				: TEMPLATE_VARIABLE_NAMES.filter(variable => !timeVariables.has(variable));
+			assert.deepEqual(row.dropdown.options, ["", ...expected]);
+			assert.equal(row.dropdown.options.includes("now"), field === "logicalPath");
 			row.dropdown.change("url");
 			assert.ok(rule[field].endsWith("{{url}}"));
 		}
 		assert.equal(saves, 3);
 	} finally { globalThis.document = originalDocument; }
-});
-
-test("historical dates are captured from logical paths", () => {
-	const target = logicalToRemote(exampleRule(), "Attachments/2021/old.png", connectionUrl, vars("old.png", "2030"));
-	assert.equal(target.remotePath, "Pictures/2021/old.png");
-});
-
-test("date formats containing path separators preserve historical directory values", () => {
-	const rule = normalizeUploadRule({ ...exampleRule(), logicalPath: "Attachments/{{now:YYYY/MM}}/{{nameext}}", remotePath: "Pictures/{{now:YYYY/MM}}/{{nameext}}" });
-	const target = logicalToRemote(rule, "Attachments/2021/05/old.png", connectionUrl, vars("old.png", "2030/10"));
-	assert.equal(target.remotePath, "Pictures/2021/05/old.png");
 });
 
 test("URL values encode special filenames once and can be resolved back", () => {
@@ -280,7 +276,7 @@ test("URL values encode special filenames once and can be resolved back", () => 
 test("preview templates may use a different URL layout and query parameters", () => {
 	const rule = normalizeUploadRule({ ...exampleRule(), previewUrl: "https://cdn.example.com/view?path={{remotePath}}&token=fixed" });
 	const target = buildUploadTarget(rule, connectionUrl, vars());
-	assert.equal(target.previewUrl, "https://cdn.example.com/view?path=Pictures%2F2026%2Fexample.png&token=fixed");
+	assert.equal(target.previewUrl, "https://cdn.example.com/view?path=Pictures%2Fexample.png&token=fixed");
 	assert.equal(resolvePreviewUrl(target.previewUrl, [rule], connectionUrl)?.remotePath, target.remotePath);
 });
 
@@ -319,7 +315,7 @@ test("existing local upload renders a new target from the source folder", async 
 	assert.equal(result.markdownLink, "![a.png](../attachments/obassets/pics/a.png)");
 	assert.deepEqual(f.created, []);
 	assert.equal(f.requests[0].headers["If-None-Match"], "*");
-	assert.equal(f.plugin.saved.pathMappings[0].remotePath, result.remotePath);
+	assert.ok(f.remote.has(result.remotePath));
 });
 
 test("shortest wikilinks resolve the source by name and stay shortest", async () => {
@@ -334,11 +330,11 @@ test("shortest wikilinks resolve the source by name and stay shortest", async ()
 	assert.equal(result.markdownLink, "![[a.png]]");
 });
 
-test("local media takes precedence and missing relative/wiki targets use the same mapping", async () => {
+test("local media takes precedence and missing relative/wiki targets use the same target", async () => {
 	const f = fixture();
 	const loader = new WebDavMediaLoader(f.plugin, []);
 	try {
-		const expected = "Pictures/2021/example.png";
+		const expected = "Pictures/example.png";
 		assert.equal((await loader.resolveMissingAttachment("../Attachments/2021/example.png", f.note.path)).remotePath, expected);
 		assert.equal((await loader.resolveMissingAttachment("Attachments/2021/example.png", f.note.path)).remotePath, expected);
 		f.add("Attachments/2021/example.png");
@@ -362,9 +358,9 @@ test("download, exists, PROPFIND, MOVE and DELETE only use remote paths", async 
 	const renamed = await link.rename(f.note, "Attachments/2021/renamed.png");
 	assert.ok(renamed.includes("Attachments/2021/renamed.png"));
 	assert.ok(f.files.has("Attachments/2021/renamed.png"));
-	assert.ok(f.remote.has("Pictures/2021/renamed.png"));
+	assert.ok(f.remote.has("Pictures/renamed.png"));
 	await link.delete(f.note);
-	assert.ok(!f.remote.has("Pictures/2021/renamed.png"));
+	assert.ok(!f.remote.has("Pictures/renamed.png"));
 	assert.deepEqual(f.requests.map(request => request.method), ["GET", "HEAD", "PROPFIND", "HEAD", "MOVE", "DELETE"]);
 });
 
@@ -372,7 +368,7 @@ test("batch download processes missing logical links and skips existing local fi
 	const f = fixture({ createBatchLog: false });
 	f.note.data = "![](../Attachments/2021/example.png)\n![](../Attachments/2021/local.png)";
 	f.add("Attachments/2021/local.png", "local");
-	f.remote.set("Pictures/2021/example.png", new TextEncoder().encode("remote").buffer);
+	f.remote.set("Pictures/example.png", new TextEncoder().encode("remote").buffer);
 	const batch = new BatchDownloader(f.plugin);
 	await batch.downloadNoteFiles(f.note);
 	assert.equal(batch.result.filter(item => item.status === "success").length, 1);
@@ -390,7 +386,7 @@ test("batch upload reuses remote transfer and cleans only committed local refere
 	assert.equal(f.requests.filter(request => request.method === "PUT").length, 1);
 	assert.equal(batch.result.filter(item => item.status === "success").length, 2);
 	assert.equal(f.files.has("Attachments/2021/example.png"), false, JSON.stringify(batch.cleanupResults));
-	assert.ok(f.note.data.includes("../Attachments/2026/example.png"));
+	assert.ok(f.note.data.includes("../Attachments/example.png"));
 });
 
 test("URL mode disables uploading existing local links without changing their note text", async () => {
@@ -414,7 +410,7 @@ test("URL mode renames the DAV path and keeps the new preview URL in the note", 
 	const renamed = await link.rename(f.note, "Pictures/2021/renamed.png");
 	assert.equal(matchLinks(renamed)[0].path, "https://cdn.example.com/Pictures/2021/renamed.png");
 	assert.ok(f.remote.has("Pictures/2021/renamed.png"));
-	assert.equal((await link.getMapping()).logicalPath, "Attachments/2021/renamed.png");
+	assert.equal((await link.getMapping()).logicalPath, "Attachments/renamed.png");
 	assert.deepEqual(f.created, []);
 });
 
@@ -441,7 +437,7 @@ test("explicit download returns a local link in URL mode and batch downloads use
 	f.note.data = second.markdownLink;
 	const batch = new BatchDownloader(f.plugin);
 	await batch.downloadNoteFiles(f.note);
-	assert.equal(batch.result[0].status, "success");
+	assert.equal(batch.result[0].status, "success", batch.result[0].message);
 	assert.ok(f.files.has(second.logicalPath));
 	assert.ok(!f.note.data.includes("https:"));
 });
@@ -457,79 +453,46 @@ test("existing logical links remain downloadable when switched to URL mode", asy
 	assert.equal(downloaded.tFile.path, uploaded.logicalPath);
 });
 
-test("recorded mappings survive settings reload for non-recoverable time templates", async () => {
-	const f = fixture({ uploadRules: [normalizeUploadRule({ ...exampleRule(), logicalPath: "Attachments/{{nameext}}", remotePath: "Pictures/{{now:YYYY-MM-DD}}/{{nameext}}" })] });
-	const session = new TransferSession(f.plugin);
-	const target = buildUploadTarget(f.settings.uploadRules[0], connectionUrl, vars("old.png", "2021-01-01"));
-	await session.upload(new File(["bytes"], "old.png"), target);
-	f.plugin.settings = sanitizeSettings(f.plugin.saved);
-	const mapped = await new AttachmentPathResolver(f.plugin).resolve("../Attachments/old.png", f.note.path);
-	assert.equal(mapped.remotePath, "Pictures/2021-01-01/old.png");
-});
-
-test("changing preview settings updates fallback without changing recorded storage paths", async () => {
+test("changed rules are re-resolved without stored mappings", async () => {
 	const f = fixture();
-	const recorded = buildUploadTarget(exampleRule(), connectionUrl, vars());
-	await f.plugin.rememberPathMapping(recorded);
 	f.settings.uploadRules[0].remotePath = "NewDirectory/{{nameext}}";
 	f.settings.uploadRules[0].previewUrl = "https://new-cdn.example.com/view?path={{remotePath}}";
-	const result = await new AttachmentPathResolver(f.plugin).resolve("../Attachments/2026/example.png", f.note.path);
-	assert.equal(result.remotePath, "Pictures/2026/example.png");
-	assert.equal(result.previewUrl, "https://new-cdn.example.com/view?path=Pictures%2F2026%2Fexample.png");
+	const result = await new AttachmentPathResolver(f.plugin).resolve("../Attachments/example.png", f.note.path);
+	assert.equal(result.remotePath, "NewDirectory/example.png");
+	assert.equal(result.previewUrl, "https://new-cdn.example.com/view?path=NewDirectory%2Fexample.png");
 	assert.deepEqual(f.requests, []);
 });
 
-test("invalid preview settings fail instead of using the persisted old URL", async () => {
+test("invalid preview settings fail without a stored URL fallback", async () => {
 	const f = fixture();
-	const recorded = buildUploadTarget(exampleRule(), connectionUrl, vars());
-	await f.plugin.rememberPathMapping(recorded);
 	for (const previewUrl of ["{{unknown}}", "not-a-url/{{remotePath}}", "{{url}}/{{notavailable}}"] ) {
 		f.settings.uploadRules[0].previewUrl = previewUrl;
-		await assert.rejects(new AttachmentPathResolver(f.plugin).resolve("../Attachments/2026/example.png", f.note.path));
+		await assert.rejects(new AttachmentPathResolver(f.plugin).resolve("../Attachments/example.png", f.note.path));
 	}
 	assert.deepEqual(f.requests, []);
-	assert.equal(f.settings.pathMappings[0].previewUrl, recorded.previewUrl);
+});
+
+test("derived paths reject time-dependent variables", () => {
+	for (const field of ["remotePath", "previewUrl"]) {
+		const rule = { ...exampleRule(), [field]: `Pictures/{{now:YYYY}}/{{nameext}}` };
+		assert.match(validateUploadRule(rule, connectionUrl)[0], /time-dependent/);
+		assert.throws(() => buildUploadTarget(rule, connectionUrl, vars()), /time-dependent/);
+	}
 });
 
 test("managed URL resolution reports an invalid matching template instead of trying another rule", () => {
 	const invalid = { ...exampleRule(), previewUrl: "https://cdn.example.com/{{remotePath}}?token={{unknown}}" };
 	const valid = { ...exampleRule(), previewUrl: "https://cdn.example.com/{{remotePath}}?token=value" };
-	assert.throws(() => resolvePreviewUrl("https://cdn.example.com/Pictures/2026/example.png?token=value", [invalid, valid], connectionUrl), /Unknown template variable/);
+	assert.throws(() => resolvePreviewUrl("https://cdn.example.com/Pictures/example.png?token=value", [invalid, valid], connectionUrl), /Unknown template variable/);
 });
 
-test("rename keeps non-recoverable dates from the recorded remote directory", async () => {
-	const f = fixture({ uploadRules: [normalizeUploadRule({ ...exampleRule(), logicalPath: "Attachments/{{nameext}}", remotePath: "Pictures/{{now:YYYY-MM-DD}}/{{nameext}}" })] });
-	const recorded = buildUploadTarget(f.settings.uploadRules[0], connectionUrl, vars("old.png", "2021-01-01"));
-	await f.plugin.rememberPathMapping(recorded);
-	f.remote.set(recorded.remotePath, new TextEncoder().encode("bytes").buffer);
-	const link = createLink(f.plugin, matchLinks("![](../Attachments/old.png)")[0], f.note.path);
-	await link.init();
-	await link.rename(f.note, "Attachments/new.png");
-	assert.ok(f.remote.has("Pictures/2021-01-01/new.png"));
-});
-
-test("mapped attachments remain manageable when generated names no longer match the source rule", async () => {
-	const rule = normalizeUploadRule({ ...exampleRule(), prefix: "IMG_", logicalPath: "Attachments/renamed.{{ext}}" });
-	const f = fixture({ uploadRules: [rule], createBatchLog: false });
-	const result = await createLink(f.plugin, new File(["bytes"], "IMG_photo.png"), f.note.path).upload(f.note);
-	f.note.data = result.markdownLink;
-	const link = createLink(f.plugin, matchLinks(result.markdownLink)[0], f.note.path);
-	assert.equal(link.downloadable(), true);
-	const batch = new BatchDownloader(f.plugin);
-	await batch.downloadNoteFiles(f.note);
-	assert.equal(batch.result[0].status, "success");
-	assert.ok(f.files.has("Attachments/renamed.png"));
-});
-
-test("filename-only links use saved paths and reject ambiguous names", async () => {
-	const f = fixture();
-	const first = buildUploadTarget(exampleRule(), connectionUrl, vars("same.png", "2021"));
-	await f.plugin.rememberPathMapping(first);
+test("shortest filename links resolve from note context and the first matching rule", async () => {
+	const f = fixture({ uploadRules: [sourcePathRule()] });
 	const resolver = new AttachmentPathResolver(f.plugin);
-	assert.equal((await resolver.resolve("same.png", f.note.path)).remotePath, first.remotePath);
-	await f.plugin.rememberPathMapping(buildUploadTarget(exampleRule(), connectionUrl, vars("same.png", "2022")));
-	await assert.rejects(resolver.resolve("same.png", f.note.path), /Ambiguous/);
-	assert.equal((await resolver.resolve("Attachments/2021/same.png", f.note.path)).remotePath, first.remotePath);
+	const result = await resolver.resolve("a.png", f.note.path);
+	assert.equal(result.logicalPath, "Attachments/pics/a.png");
+	assert.equal(result.remotePath, "Attachments/pics/a.png");
+	assert.equal(result.previewUrl, "https://example.com/p/od/Attachments/pics/a.png");
 });
 
 test("cache keys use DAV destinations regardless of preview URLs and invalidate on changes", async () => {
@@ -553,27 +516,26 @@ test("cache keys use DAV destinations regardless of preview URLs and invalidate 
 	} finally { store.destroy(); }
 });
 
-test("remote collisions retain the local file and do not replace mappings", async () => {
+test("remote collisions retain the local file", async () => {
 	const f = fixture();
 	f.add("Attachments/2021/example.png", "local bytes");
-	f.remote.set("Pictures/2026/example.png", new TextEncoder().encode("existing").buffer);
+	f.remote.set("Pictures/example.png", new TextEncoder().encode("existing").buffer);
 	const link = createLink(f.plugin, matchLinks("![](../Attachments/2021/example.png)")[0], f.note.path);
 	await assert.rejects(link.upload(f.note), /already exists/);
 	assert.ok(f.files.has("Attachments/2021/example.png"));
-	assert.deepEqual(f.settings.pathMappings, []);
+	assert.ok(f.remote.has("Pictures/example.png"));
 });
 
 test("dummy PDF pointers use previewUrl but GET and MOVE use remotePath", async () => {
 	const f = fixture({ enableDummyPdf: true });
 	const target = buildUploadTarget(exampleRule(), connectionUrl, vars("file.pdf"));
-	await f.plugin.rememberPathMapping(target);
 	const pointer = f.add(target.logicalPath, target.previewUrl);
 	f.remote.set(target.remotePath, new TextEncoder().encode("%PDF bytes").buffer);
 	const link = createLink(f.plugin, matchLinks("![[" + target.logicalPath + "]]")[0], f.note.path);
 	await link.init();
-	await link.rename(f.note, "Attachments/2026/new.pdf");
-	assert.equal(pointer.path, "Attachments/2026/new.pdf");
-	assert.equal(pointer.data, "https://cdn.example.com/Pictures/2026/new.pdf");
+	await link.rename(f.note, "Attachments/new.pdf");
+	assert.equal(pointer.path, "Attachments/new.pdf");
+	assert.equal(pointer.data, "https://cdn.example.com/Pictures/new.pdf");
 	await link.download(f.note);
 	assert.equal(new TextDecoder().decode(pointer.data), "%PDF bytes");
 });
@@ -585,13 +547,12 @@ test("uploading an existing PDF creates its dummy under the logical folder and k
 	await link.init();
 	const result = await link.upload(f.note);
 	assert.equal(original.data, "%PDF original");
-	assert.equal(result.logicalPath, "Attachments/2026/original.pdf");
-	assert.equal(result.remotePath, "Pictures/2026/original.pdf");
-	assert.equal(f.settings.pathMappings.length, 1);
+	assert.equal(result.logicalPath, "Attachments/original.pdf");
+	assert.equal(result.remotePath, "Pictures/original.pdf");
 	const dummy = createLink(f.plugin, matchLinks(result.markdownLink)[0], f.note.path);
 	await dummy.init();
 	await dummy.rename(f.note, "Attachments/2021/new.pdf");
-	assert.ok(f.remote.has("Pictures/2021/new.pdf"));
+	assert.ok(f.remote.has("Pictures/new.pdf"));
 	assert.ok(f.created.every(path => !path.startsWith("Pictures")));
 });
 
@@ -600,5 +561,4 @@ test("URL mode inserts PDF URLs without creating dummy files", async () => {
 	const result = await createLink(f.plugin, new File(["%PDF image"], "file.pdf"), f.note.path).upload(f.note);
 	assert.equal(matchLinks(result.markdownLink)[0].path, result.previewUrl);
 	assert.deepEqual(f.created, []);
-	assert.equal(f.settings.pathMappings[0].logicalPath, result.logicalPath);
 });

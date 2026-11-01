@@ -2,6 +2,7 @@ import { normalizeVaultPath, safeDecodeURIComponent } from "./attachmentPaths";
 import type { NewLinkFormat } from "./obsidianPaths";
 import {
 	TemplateResolver,
+	TEMPLATE_VARIABLE_NAMES,
 	TEMPLATE_VARIABLE_PATTERN,
 	stringVariable,
 	templateKey,
@@ -37,6 +38,33 @@ export interface AttachmentMapping {
 
 export interface UploadTarget extends AttachmentMapping {
 	rule: UploadRule;
+}
+
+const UNSTABLE_PATH_VARIABLES = new Set([
+	"mtime",
+	"now",
+	"notectime",
+	"notemtime",
+]);
+
+export type UploadTemplateField = "logicalPath" | "remotePath" | "previewUrl";
+
+export function isTemplateVariableAllowed(
+	field: UploadTemplateField,
+	variable: string,
+): boolean {
+	return (
+		field === "logicalPath" ||
+		!UNSTABLE_PATH_VARIABLES.has(variable.toLowerCase())
+	);
+}
+
+export function getTemplateVariables(
+	field: UploadTemplateField,
+): readonly string[] {
+	return TEMPLATE_VARIABLE_NAMES.filter((variable) =>
+		isTemplateVariableAllowed(field, variable),
+	);
 }
 
 export const DEFAULT_LOGICAL_PATH = "{{attachment}}/{{nameext}}";
@@ -96,33 +124,6 @@ export function sanitizeUploadRules(settingsData: unknown): UploadRule[] {
 		: [createDefaultUploadRule()];
 }
 
-export function sanitizePathMappings(value: unknown): AttachmentMapping[] {
-	if (!Array.isArray(value)) return [];
-	const mappings = new Map<string, AttachmentMapping>();
-	for (const item of value) {
-		if (
-			!isRecord(item) ||
-			typeof item.logicalPath !== "string" ||
-			typeof item.remotePath !== "string" ||
-			typeof item.previewUrl !== "string"
-		)
-			continue;
-		try {
-			const logicalPath = normalizeFilePath(item.logicalPath);
-			const remotePath = normalizeFilePath(item.remotePath);
-			validatePreviewUrl(item.previewUrl);
-			mappings.set(logicalPath, {
-				logicalPath,
-				remotePath,
-				previewUrl: item.previewUrl,
-			});
-		} catch {
-			/* Ignore malformed persisted mappings. */
-		}
-	}
-	return [...mappings.values()];
-}
-
 export function getFileNameParts(filePath: string, isLink = true) {
 	const cleanPath = isLink ? filePath.split(/[?#]/, 1)[0] : filePath;
 	const encodedName = cleanPath.split(/[\\/]/).pop() ?? "";
@@ -165,6 +166,15 @@ export function validateUploadRule(
 	webdavUrl: string,
 ): string[] {
 	const errors: string[] = [];
+	for (const field of ["remotePath", "previewUrl"] as const) {
+		for (const match of rule[field].matchAll(TEMPLATE_VARIABLE_PATTERN)) {
+			if (!isTemplateVariableAllowed(field, match[1])) {
+				errors.push(
+					`${field} cannot use time-dependent variable {{${match[1]}}}; derive it from logicalPath instead.`,
+				);
+			}
+		}
+	}
 	try {
 		const parsed = new URL(webdavUrl);
 		if (
@@ -409,12 +419,8 @@ export function isManagedUrl(
 	url: string,
 	webdavUrl: string,
 	rules: UploadRule[],
-	mappings: AttachmentMapping[] = [],
 ): boolean {
-	return (
-		mappings.some((mapping) => samePreviewUrl(mapping.previewUrl, url)) ||
-		resolvePreviewUrl(url, rules, webdavUrl) != null
-	);
+	return resolvePreviewUrl(url, rules, webdavUrl) != null;
 }
 
 export function formatUploadLink(

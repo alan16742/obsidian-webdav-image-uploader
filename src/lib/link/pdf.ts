@@ -67,9 +67,7 @@ export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 		this.dummyFile = file;
 		this.dummyContent = content;
 		this.previewUrl = url;
-		const mapped =
-			this.session.paths.findLogical(file.path) ??
-			(await this.session.paths.resolve(url, this.sourcePath));
+		const mapped = await this.session.paths.resolve(url, this.sourcePath);
 		if (mapped != null)
 			this.mapping = { ...mapped, logicalPath: file.path };
 		this.linkType = "external";
@@ -100,10 +98,6 @@ export class PdfLink<T extends LinkData> extends AttachmentLink<T> {
 			previewUrl: result.previewUrl,
 		};
 		this.mapping = mapping;
-		await this.session.paths.remember(
-			mapping,
-			file.path === result.logicalPath ? undefined : result.logicalPath,
-		);
 		const markdownLink = this.formatLocalLink(note, file.path, file.name);
 		return { ...result, ...mapping, markdownLink: embed(markdownLink) };
 	}

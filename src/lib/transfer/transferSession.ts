@@ -17,7 +17,6 @@ export function snapshotSettings(
 			...rule,
 			extensions: [...rule.extensions],
 		})),
-		pathMappings: settings.pathMappings.map((mapping) => ({ ...mapping })),
 	};
 }
 
@@ -66,11 +65,9 @@ export class TransferSession {
 					]);
 		const existing = key == null ? undefined : this.uploads.get(key);
 		if (existing != null) return existing;
-		this.paths.assertAvailable(target);
 		const upload = (async () => {
 			const result = await this.client.uploadFile(file, target);
 			this.plugin.mediaLoader?.blobStore.invalidate(result.remotePath);
-			await this.paths.remember(result);
 			return result;
 		})();
 		if (key != null) {

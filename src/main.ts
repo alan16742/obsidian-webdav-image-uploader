@@ -25,10 +25,7 @@ import {
 } from "./settings";
 import { BatchDownloader, BatchUploader } from "./lib/batch";
 import { ConfirmModal } from "./view/modals/confirmModal";
-import {
-	isManagedUrl,
-	type AttachmentMapping,
-} from "./lib/attachment/uploadRules";
+import { isManagedUrl } from "./lib/attachment/uploadRules";
 import { EditorActions } from "./lib/note/editorActions";
 
 export default class WebDavImageUploaderPlugin extends Plugin {
@@ -146,26 +143,6 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 		return write;
 	}
 
-	async rememberPathMapping(
-		mapping: AttachmentMapping,
-		previousLogicalPath?: string,
-	) {
-		this.settings.pathMappings = this.settings.pathMappings.filter(
-			(item) =>
-				item.logicalPath !== mapping.logicalPath &&
-				item.logicalPath !== previousLogicalPath,
-		);
-		this.settings.pathMappings.push({ ...mapping });
-		await this.persistSettings();
-	}
-
-	async forgetPathMapping(logicalPath: string) {
-		this.settings.pathMappings = this.settings.pathMappings.filter(
-			(item) => item.logicalPath !== logicalPath,
-		);
-		await this.persistSettings();
-	}
-
 	async toggleAutoUpload() {
 		this.settings.enableUpload = !this.settings.enableUpload;
 		await this.saveSettings();
@@ -267,11 +244,6 @@ export default class WebDavImageUploaderPlugin extends Plugin {
 	}
 
 	isWebdavUrl(url: string) {
-		return isManagedUrl(
-			url,
-			this.settings.url,
-			this.settings.uploadRules,
-			this.settings.pathMappings,
-		);
+		return isManagedUrl(url, this.settings.url, this.settings.uploadRules);
 	}
 }

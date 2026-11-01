@@ -7,9 +7,9 @@ import {
 	DEFAULT_REMOTE_PATH,
 	DEFAULT_PREVIEW_URL,
 	getLocalLinkTarget,
+	getTemplateVariables,
 	normalizeExtension,
 	normalizeUploadRule,
-	TEMPLATE_VARIABLE_NAMES,
 	type UploadRule,
 } from "../../lib/attachment/uploadRules";
 import {
@@ -276,7 +276,7 @@ export class UploadRuleSettingRenderer {
 				})
 				.addDropdown((dropdown) => {
 					dropdown.addOption("", "Insert variable…");
-					for (const variable of TEMPLATE_VARIABLE_NAMES) {
+					for (const variable of getTemplateVariables(field)) {
 						dropdown.addOption(variable, `{{${variable}}}`);
 					}
 					dropdown.onChange((variable) => {
